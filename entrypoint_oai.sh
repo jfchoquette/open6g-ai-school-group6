@@ -3,8 +3,11 @@
 killall nr-softmodem
 pkill -9 nr-softmodem
 
-export LUA_SCHED=/phy/openairinterface5g/pf_dl_simple.lua
-export LUA_SCHED_UL=/phy/openairinterface5g/pf_ul_simple.lua
+export LUA_SCHED="${1:-/phy/openairinterface5g/pf_dl_simple.lua}"
+export LUA_SCHED_UL="${2:-/phy/openairinterface5g/pf_ul_simple.lua}"
+
+echo "Using LUA_SCHED: $LUA_SCHED"
+echo "Using LUA_SCHED_UL: $LUA_SCHED_UL"
 
 current_folder=$PWD
 cp /etc/oai/gnb.conf /gnb.conf
