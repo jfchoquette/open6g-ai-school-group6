@@ -1,6 +1,6 @@
--- Minimal DL PF Scheduler — no logging, no rate limiting.
+-- DL PF Scheduler with OLLA MCS adaptation (every 10 frames / 100ms).
 -- Every slot: retx → new data (PF sorted, largest block).
--- Use for baseline testing: export LUA_SCHED=/path/to/pf_dl_simple.lua
+-- Use: export LUA_SCHED=/path/to/pf_dl_simple.lua
 
 local ffi = require("ffi")
 
@@ -34,6 +34,52 @@ typedef struct {
 
 local UE_TYPE_NEW_DATA = 0
 local UE_TYPE_HARQ_RETX = 1
+
+---------------------------------------------------------------------------
+-- OLLA state per RNTI
+---------------------------------------------------------------------------
+local olla = {}
+
+local MAX_FRAME    = 1024   -- NR frame counter wraps at 1024
+local OLLA_PERIOD  = 10     -- adjust every 10 frames (100ms)
+local BLER_TARGET  = 0.10
+local OLLA_UP      = 0.10   -- step up per period when BLER < target
+local OLLA_DOWN    = 1.00   -- step down per period when BLER >= target
+local MIN_MCS      = 0
+
+local function frames_elapsed(now, last)
+    return (now - last) % MAX_FRAME
+end
+
+local function olla_mcs(rnti, seed_mcs, bler, mcs_table, frame)
+    local max_mcs = 27
+    local s = olla[rnti]
+
+    if not s then
+        local init = seed_mcs > 0 and seed_mcs or 4
+        s = { frac = init + 0.0, last_frame = frame }
+        olla[rnti] = s
+    end
+
+    -- One adjustment per OLLA_PERIOD frames
+    if frames_elapsed(frame, s.last_frame) >= OLLA_PERIOD then
+        if bler < BLER_TARGET then
+            s.frac = s.frac + OLLA_UP
+        else
+            s.frac = s.frac - OLLA_DOWN
+        end
+        s.last_frame = frame
+    end
+
+    -- Clamp to valid range
+    s.frac = math.max(MIN_MCS, math.min(s.frac, max_mcs))
+
+    return math.floor(s.frac)
+end
+
+---------------------------------------------------------------------------
+-- RB mask helpers
+---------------------------------------------------------------------------
 
 -- Find first contiguous free RBs in mask
 local function find_free_rbs(mask, needed, bwp_start, bwp_size)
@@ -86,8 +132,14 @@ local function find_largest_block(mask, bwp_start, bwp_size)
     return best_start, best_len
 end
 
+---------------------------------------------------------------------------
+-- Debug logging (periodic)
+---------------------------------------------------------------------------
 local debug_counter = 0
 
+---------------------------------------------------------------------------
+-- Main entry point called from C every DL slot
+---------------------------------------------------------------------------
 function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_string)
     local metrics = ffi.cast("dl_ue_metric_t*", metrics_ptr)
     local mask = rb_mask_string
@@ -96,13 +148,17 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
     if debug_counter % 100 == 0 then
         for i = 0, n_ues - 1 do
             local m = metrics[i]
-            print(string.format("[DL %d.%d] UE %04x: pending=%d thr=%.0f mcs=%d bler=%.2f cqi=%d hol=%d us type=%d",
+            local s = olla[m.rnti]
+            local frac_str = s and string.format("%.2f", s.frac) or "N/A"
+            print(string.format(
+                "[DL %d.%d] UE %04x: pending=%d thr=%.0f mcs=%d olla_frac=%s bler=%.3f cqi=%d hol=%d us type=%d",
                 m.frame, m.slot, m.rnti, m.pending_bytes, m.throughput,
-                m.previous_mcs, m.bler, m.cqi, tonumber(m.hol_delay_us), m.ue_type))
+                m.previous_mcs, frac_str, m.bler, m.cqi,
+                tonumber(m.hol_delay_us), m.ue_type))
         end
     end
 
-    -- Phase 1: HARQ retransmissions (exact RBs, highest priority)
+    -- Phase 1: HARQ retransmissions (exact RBs, highest priority, original MCS)
     for i = 0, n_ues - 1 do
         local m = metrics[i]
         if m.ue_type == UE_TYPE_HARQ_RETX and m.required_rbs > 0 then
@@ -133,7 +189,7 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
         local best_start, best_len = find_largest_block(mask, m.bwp_start, m.bwp_size)
 
         if best_len >= min_rbs then
-            local mcs = math.min(m.previous_mcs, 27)
+            local mcs = olla_mcs(m.rnti, m.previous_mcs, m.bler, m.mcs_table, m.frame)
             m.allocated_rb = best_len
             m.allocated_mcs = mcs
             m.allocated_rb_start = best_start
