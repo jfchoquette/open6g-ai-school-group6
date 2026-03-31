@@ -251,7 +251,7 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
     for i = 0, n_ues - 1 do
         local m = metrics[i]
         m.allocated_rb = 0
-        m.allocated_mcs = 0
+        m.allocated_mcs = 9
         m.allocated_rb_start = 0
     end
 
