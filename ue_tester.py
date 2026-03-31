@@ -47,6 +47,7 @@ def ue_5qi():
         return CQI.URLLC
 
     print(f"FATAL: {TARGET_IMSI} is not a configured IMSI!")
+    sys.exit(1)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Sierra 5G traffic generation script")
@@ -76,20 +77,15 @@ async def cleanup(control, imei):
     await asyncio.sleep(5)
     print("Disconnecting...")
     await control.disconnect(imei)
-
-
-async def main(args):
-    if not TARGET_IMSI:
-        print("ERROR: TARGET_IMSI environment variable not set!")
-        return
-
-    control = SierraControl(SERVER_URL)
-
-    # 1. Find device by IMSI
+    
+async def get_imei(control):
+    """
+    Returns IMEI
+    """
     devices = await control.get_devices()
     if not devices:
-        print("No devices available!")
-        return
+        print("FATAL: No devices available!")
+        sys.exit(1)
 
     imei = None
     for dev_imei in devices:
@@ -99,31 +95,26 @@ async def main(args):
             break
 
     if not imei:
-        print(f"Device with IMSI {TARGET_IMSI} not found!")
-        return
-
+        print(f"FATAL: Device with IMSI {TARGET_IMSI} not found!")
+        sys.exit(1)
     print(f"Found device: IMEI {imei} (IMSI {TARGET_IMSI})")
 
+    return imei
+
+
+async def main(args):
+    if not TARGET_IMSI:
+        print("ERROR: TARGET_IMSI environment variable not set!")
+        return
+
+    control = SierraControl(SERVER_URL)
+
+    imei = await get_imei(control)
+
     try:
-        # 2. Connect
         await control.connect(imei)
 
-        # 3. Reboot if requested
-        if args.reboot:
-            print("\n[REBOOT] Rebooting Sierra...")
-            await control.reboot_sierra(imei)
-            print("Sierra rebooted.")
-
-        # 4. Clean up any stale PDU session
-        print("\nDeleting any existing PDU session...")
-        await control.delete_pdu(imei)
-        print("Waiting 30s for cleanup...")
-        await asyncio.sleep(30)
-
-        # 5. Disable airplane mode
-        print("Disabling airplane mode...")
-        await control.disable_airplane_mode(imei)
-        await asyncio.sleep(15)
+        await do_pre_run_cleanup(control, imei, reboot=args.reboot)
 
         # 6. Create PDU session (infinite retries)
         pdu_ok = False
@@ -202,6 +193,23 @@ async def run_tests(control, imei):
     
     if ue_5qi() == CQI.URLLC:
         await run_tests_for_urlcc(control, imei)
+
+async def do_pre_run_cleanup(control, imei, reboot=False):
+    if reboot:
+        print("\n[REBOOT] Rebooting Sierra...")
+        await control.reboot_sierra(imei)
+        print("Sierra rebooted.")
+
+    # Clean up any stale PDU session
+    print("\nDeleting any existing PDU session...")
+    await control.delete_pdu(imei)
+    print("Waiting 30s for cleanup...")
+    await asyncio.sleep(30)
+
+    # Disable airplane mode
+    print("Disabling airplane mode...")
+    await control.disable_airplane_mode(imei)
+    await asyncio.sleep(15)
 
 def run():
     args = parse_args()
