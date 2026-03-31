@@ -60,7 +60,7 @@ local EMBB_OLLA_DOWN    = 1.00
 
 local URLLC_BLER_TARGET = 0.001
 local URLLC_OLLA_UP     = 0.05
-local URLLC_OLLA_DOWN   = 2.00
+local URLLC_OLLA_DOWN   = 1.00
 
 local function frames_elapsed(now, last)
     return (now - last) % MAX_FRAME
