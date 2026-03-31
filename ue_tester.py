@@ -103,7 +103,8 @@ class CQI(enum.Enum):
         if self == CQI.URLLC:
             other_cqi = CQI.eMBB
 
-        return f"{WRITABLE_DIRECTORY}/{other_cqi}-pdu.lock"
+        other_cqi_name = other_cqi.as_string()
+        return f"{WRITABLE_DIRECTORY}/{other_cqi_name}-pdu.lock"
 
     def as_string(self):
         if self == CQI.eMBB:
