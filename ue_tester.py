@@ -1,18 +1,20 @@
 """
 Sierra 5G traffic generation script.
 
+If the UE is detected to be configured for eMBB -> Run ping tests only
+
+If the UE is detected to be configured for URLCC -> Run
+
 Usage:
   python school_sierra_controller.py                # PDU up for 30s, no tests
-  python school_sierra_controller.py --hold 120     # keep PDU active 120s (15-300)
   python school_sierra_controller.py --reboot       # reboot sierra first
-  python school_sierra_controller.py --ping         # run ping tests
-  python school_sierra_controller.py --iperf        # run iperf traffic test
 """
 import argparse
 import asyncio
 import os
 import signal
 import sys
+import enum
 sys.path.insert(0, '.')
 
 from sierra_control import SierraControl
@@ -20,20 +22,37 @@ from sierra_control import SierraControl
 SERVER_URL = "wss://sierra-server-sierras.apps.tenoran.automation.otic.open6g.net"
 TARGET_IMSI = os.environ.get("TARGET_IMSI")
 
+EMBB_IMSI = os.environ.get("EMBB_IMSI", "001080000150191") # Sierra 1
+
+URLLC_IMSI = os.environ.get("URLLC_IMSI", "001080000150192") # Sierra 2
+
+class CQI(enum.Enum):
+    eMBB = enum.auto()
+    URLLC = enum.auto()
+
+def ue_5qi():
+    """
+    Decides 5QI to help automatically determine which tests to run and format output.
+    Assumes that the IMSIs have already been configured accordingly in the core.
+    Hard-coded defaults should be fine.
+
+    Returns:
+        CQI: 5QI for given IMSI
+    """
+
+    if TARGET_IMSI == EMBB_IMSI:
+        return CQI.eMBB
+    
+    if TARGET_IMSI == URLLC_IMSI:
+        return CQI.URLLC
+
+    print(f"FATAL: {TARGET_IMSI} is not a configured IMSI!")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Sierra 5G traffic generation script")
     parser.add_argument("--reboot", action="store_true",
                         help="Reboot the Sierra modem before starting")
-    parser.add_argument("--hold", type=int, default=30, metavar="SECONDS",
-                        help="Keep PDU session active for SECONDS after tests (15-300, default: 30)")
-    parser.add_argument("--ping", action="store_true",
-                        help="Run the ping test")
-    parser.add_argument("--iperf", action="store_true",
-                        help="Run the iperf test")
     args = parser.parse_args()
-    if args.hold < 15 or args.hold > 300:
-        parser.error("--hold must be between 15 and 300 seconds")
     return args
 
 
@@ -117,34 +136,17 @@ async def main(args):
 
         print("\n*** PDU session active ***")
         
+        # TODO
+        # WAIT HERE UNTIL SOME EVENT (MANUAL INTERVENTION)
+        # OR TIMER
+        # OR WAIT FOR BOTH UEs
+        
         # Pause and wait for user input without blocking the asyncio event loop
         loop = asyncio.get_running_loop()
+        
         await loop.run_in_executor(None, input, "Press Enter to proceed with tests...\n")
 
-        # 7. Ping test
-        if args.ping:
-            print("\nRunning ping test to 10.45.0.1...")
-            ping_ok, ping_output = await control.ping_test(imei, "10.45.0.1", timeout=30.0)
-            print(f"Ping result: {'OK' if ping_ok else 'FAILED'}")
-            if ping_output:
-                print(ping_output)
-
-        # 8. iperf traffic (UDP downlink, 100Mbps, 20s)
-        if args.iperf:
-            print("\nStarting iperf traffic (UDP DL 100Mbps, 20s)...")
-            iperf_ok, iperf_output = await control.execute_command(
-                imei,
-                "iperf -c 10.45.0.1 -p 8037 -u -b 100M -R -t 20 -i 1",
-                timeout=60.0
-            )
-            print(f"iperf result: {'OK' if iperf_ok else 'FAILED'}")
-            if iperf_output:
-                print(iperf_output)
-
-        # 9. Hold PDU session active
-        print(f"\nHolding PDU session active for {args.hold}s...")
-        await asyncio.sleep(args.hold)
-        print("Hold period complete.")
+        await run_tests(control, imei)
 
         # 10. Cleanup
         print("\nCleaning up...")
@@ -172,7 +174,34 @@ async def main(args):
             await control.disconnect(imei)
         except Exception:
             pass
+        
+async def run_tests_for_embb(control, imei):
+    print("\neMBB: Running ping test to 10.45.0.1...")
+    ping_ok, ping_output = await control.ping_test(imei, "10.45.0.1", timeout=30.0)
+    print(f"Ping result: {'OK' if ping_ok else 'FAILED'}")
+    if ping_output:
+        print(ping_output)
 
+async def run_tests_for_urlcc(control, imei):
+    """
+    iperf traffic (UDP downlink, 100Mbps, 20s)
+    """
+    print("\nURLCC: Starting iperf traffic (UDP DL 100Mbps, 20s)...")
+    iperf_ok, iperf_output = await control.execute_command(
+        imei,
+        "iperf -c 10.45.0.1 -p 8037 -u -b 100M -R -t 20 -i 1",
+        timeout=60.0
+    )
+    print(f"iperf result: {'OK' if iperf_ok else 'FAILED'}")
+    if iperf_output:
+        print(iperf_output)
+
+async def run_tests(control, imei):
+    if ue_5qi() == CQI.eMBB:
+        await run_tests_for_embb(control, imei)
+    
+    if ue_5qi() == CQI.URLLC:
+        await run_tests_for_urlcc(control, imei)
 
 def run():
     args = parse_args()
