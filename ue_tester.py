@@ -230,10 +230,13 @@ async def main(args):
 
 async def run_tests_for_embb(control, imei):
     print("\neMBB: Running ping test to 10.45.0.1...")
-    ping_ok, ping_output = await control.ping_test(imei, "10.45.0.1", timeout=30.0)
-    print(f"Ping result: {'OK' if ping_ok else 'FAILED'}")
-    if ping_output:
-        print(ping_output)
+    ping_loops = 3
+    
+    for i in range(ping_loops):
+        ping_ok, ping_output = await control.ping_test(imei, "10.45.0.1", timeout=30.0)
+        print(f"Ping result {i}: {'OK' if ping_ok else 'FAILED'}")
+        if ping_output:
+            print(ping_output)
 
 async def run_tests_for_urlcc(control, imei):
     """
