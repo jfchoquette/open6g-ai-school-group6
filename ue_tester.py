@@ -13,6 +13,7 @@ import asyncio
 import os
 import signal
 import sys
+import re
 sys.path.insert(0, '.')
 
 from sierra_control import SierraControl
@@ -126,8 +127,13 @@ async def main(args):
             print("\nRunning ping test to 10.45.0.1...")
             ping_ok, ping_output = await control.ping_test(imei, "10.45.0.1", timeout=30.0)
             print(f"Ping result: {'OK' if ping_ok else 'FAILED'}")
+            # if ping_output:
+            #     print(ping_output)
             if ping_output:
-                print(ping_output)
+                time_values = re.findall(r'time=([0-9.]+)', ping_output)
+                with open('ue_ping_output.csv', 'w') as f:
+                    f.write("time(ms)\n")
+                    f.write('\n'.join(time_values))
 
         # 8. iperf traffic (UDP downlink, 100Mbps, 20s)
         if args.iperf:
@@ -138,8 +144,25 @@ async def main(args):
                 timeout=60.0
             )
             print(f"iperf result: {'OK' if iperf_ok else 'FAILED'}")
+            # if iperf_output:
+            #     print(iperf_output)
             if iperf_output:
                 print(iperf_output)
+                with open('iperf_output.csv', 'w') as f:
+                    f.write("Interval_Start(sec),Interval_End(sec),Transfer(MBytes),Bandwidth(Mbits/sec),Jitter(ms),Lost_Datagrams,Total_Datagrams,Packet_Loss(%)\n")
+                    for line in iperf_output.split('\n'):
+                        match = re.search(r'\[\*1\]\s+([0-9.]+)-([0-9.]+)\s+sec\s+([0-9.]+)\s+MBytes\s+([0-9.]+)\s+Mbits/sec\s+([0-9.]+)\s+ms\s+([0-9]+)/([0-9]+)\s+\(([0-9.]+)%\)', line)
+                        if match:
+                            interval_start = match.group(1)
+                            interval_end = match.group(2)
+                            transfer = match.group(3)
+                            bandwidth = match.group(4)
+                            jitter = match.group(5)
+                            lost = match.group(6)
+                            total = match.group(7)
+                            loss_pct = match.group(8)
+                            
+                            f.write(f"{interval_start},{interval_end},{transfer},{bandwidth},{jitter},{lost},{total},{loss_pct}\n")
 
         # 9. Hold PDU session active
         print(f"\nHolding PDU session active for {args.hold}s...")
