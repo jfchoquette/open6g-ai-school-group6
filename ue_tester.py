@@ -7,7 +7,6 @@ Usage:
   python school_sierra_controller.py --reboot       # reboot sierra first
   python school_sierra_controller.py --ping         # run ping tests
   python school_sierra_controller.py --iperf        # run iperf traffic test
-  python school_sierra_controller.py --retries 5    # try PDU creation up to 5 times (1-10)
 """
 import argparse
 import asyncio
@@ -32,13 +31,9 @@ def parse_args():
                         help="Run the ping test")
     parser.add_argument("--iperf", action="store_true",
                         help="Run the iperf test")
-    parser.add_argument("--retries", type=int, default=1, metavar="N",
-                        help="Number of PDU session creation attempts (1-10, default: 1)")
     args = parser.parse_args()
     if args.hold < 15 or args.hold > 300:
         parser.error("--hold must be between 15 and 300 seconds")
-    if args.retries < 1 or args.retries > 10:
-        parser.error("--retries must be between 1 and 10")
     return args
 
 
@@ -107,26 +102,24 @@ async def main(args):
         await control.disable_airplane_mode(imei)
         await asyncio.sleep(15)
 
-        # 6. Create PDU session (with retries)
+        # 6. Create PDU session (infinite retries)
         pdu_ok = False
-        for attempt in range(1, args.retries + 1):
-            print(f"\nCreating PDU session (attempt {attempt}/{args.retries})...")
+        attempt = 1
+        while True:
+            print(f"\nCreating PDU session (attempt {attempt})...")
             pdu_ok = await control.create_pdu(imei, timeout=30.0)
             if pdu_ok:
                 break
-            print(f"Attempt {attempt} failed.")
-            if attempt < args.retries:
-                print("Cleaning up before next attempt...")
-                await control.delete_pdu(imei)
-                await asyncio.sleep(5)
+            print(f"Attempt {attempt} failed. Cleaning up before next attempt...")
+            await control.delete_pdu(imei)
+            await asyncio.sleep(5)
+            attempt += 1
 
-        if not pdu_ok:
-            print("ERROR: PDU creation failed after all attempts! Cleaning up...")
-            await control.enable_airplane_mode(imei)
-            await control.disconnect(imei)
-            return
-
-        print("PDU session active")
+        print("\n*** PDU session active ***")
+        
+        # Pause and wait for user input without blocking the asyncio event loop
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, input, "Press Enter to proceed with tests...\n")
 
         # 7. Ping test
         if args.ping:
