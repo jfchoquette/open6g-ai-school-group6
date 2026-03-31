@@ -87,6 +87,8 @@ async def graceful_cleanup(control, imei):
 
 async def cleanup(control, imei):
     print("\nCleaning up...")
+    if os.path.exists(CQI.get().pdu_lock_file_path):
+        os.remove(CQI.get().pdu_lock_file_path)
     await asyncio.sleep(0.5)
     print("Deleting PDU session...")
     await control.delete_pdu(imei)
