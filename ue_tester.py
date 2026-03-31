@@ -119,8 +119,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Sierra 5G traffic generation script")
     parser.add_argument("--reboot", action="store_true",
                         help="Reboot the Sierra modem before starting")
-    parser.add_argument("--ping_rounds", type=int, default=3, description="How many rounds of pings to execute, if the UE does ping tests (there are 10 seconds of pings per round)")
-    parser.add_argument("--mock", action="store_true", description="If true, do not execute anything on the sierra. For testing this script's logic only.")
+    parser.add_argument("--ping_rounds", type=int, default=6)
+    parser.add_argument("--mock", action="store_true")
     args = parser.parse_args()
     return args
 
