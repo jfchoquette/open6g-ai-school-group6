@@ -58,6 +58,18 @@ class CQI(enum.Enum):
         cqi = self.as_string()
         return f"{WRITABLE_DIRECTORY}/{cqi}-pdu.lock"
 
+    @property
+    def other_ue_lock_file_path(self):
+        other_cqi = None
+
+        if self == CQI.eMBB:
+            other_cqi = CQI.URLLC
+        
+        if self == CQI.URLLC:
+            other_cqi = CQI.eMBB
+
+        return f"{WRITABLE_DIRECTORY}/{other_cqi}-pdu.lock"
+
     def as_string(self):
         if self == CQI.eMBB:
             return "embb"
@@ -122,6 +134,13 @@ async def get_imei(control):
 
     return imei
 
+async def wait_for_other_ue_pdu_lock():
+    print("Waiting for other UE to create PDU session before running tests...")
+    while True:
+        if os.path.exists(CQI.get().other_ue_lock_file_path):
+            break
+        await asyncio.sleep(0.5)
+
 
 async def main(args):
     if not TARGET_IMSI:
@@ -139,9 +158,7 @@ async def main(args):
 
         await create_pdu_session(control, imei)
 
-        loop = asyncio.get_running_loop()
-        # TODO - update to automatically proceed if both locks exist
-        await loop.run_in_executor(None, input, "Press Enter to proceed with tests...\n")
+        await wait_for_other_ue_pdu_lock()
 
         await run_tests(control, imei)
 
