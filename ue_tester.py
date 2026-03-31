@@ -37,6 +37,9 @@ class SierraMock():
     async def enable_airplane_mode(self, imei):
         print(f"Airplane mode enabled for: {imei}")
 
+    async def disable_airplane_mode(self, imei):
+        print(f"Airplane mode disabled for: {imei}")
+
     async def disconnect(self, imei):
         print(f"Device {imei} disconnected.")
 
@@ -265,12 +268,13 @@ async def do_pre_run_cleanup(control, imei, reboot=False):
     print("\nDeleting any existing PDU session...")
     await control.delete_pdu(imei)
     print("Waiting 30s for cleanup...")
-    await asyncio.sleep(30)
+    sleep_seconds = 15 if not MOCK else 0
+    await asyncio.sleep(sleep_seconds)
 
     # Disable airplane mode
     print("Disabling airplane mode...")
     await control.disable_airplane_mode(imei)
-    await asyncio.sleep(15)
+    await asyncio.sleep(sleep_seconds)
 
 async def create_pdu_session(control, imei):
     pdu_ok = False
