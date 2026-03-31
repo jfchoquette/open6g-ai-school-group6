@@ -198,7 +198,7 @@ async def main(args):
     try:
         await control.connect(imei)
 
-        await do_pre_run_cleanup(control, imei, reboot=args.reboot)
+        await do_pre_run_cleanup(control, imei, reboot=args.reboot, mock=args.mock)
 
         await create_pdu_session(control, imei)
 
@@ -279,7 +279,7 @@ async def run_tests(control, imei):
     if CQI.get() == CQI.URLLC:
         await run_tests_for_urlcc(control, imei)
 
-async def do_pre_run_cleanup(control, imei, reboot=False):
+async def do_pre_run_cleanup(control, imei, reboot=False, mock=False):
 
     if os.path.exists(CQI.get().pdu_lock_file_path):
         os.remove(CQI.get().pdu_lock_file_path)
@@ -293,7 +293,7 @@ async def do_pre_run_cleanup(control, imei, reboot=False):
     print("\nDeleting any existing PDU session...")
     await control.delete_pdu(imei)
     print("Waiting 30s for cleanup...")
-    sleep_seconds = 15 if not MOCK else 0
+    sleep_seconds = 15 if not mock else 0
     await asyncio.sleep(sleep_seconds)
 
     # Disable airplane mode
