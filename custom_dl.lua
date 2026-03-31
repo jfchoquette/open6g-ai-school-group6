@@ -1,6 +1,7 @@
 -- Minimal DL PF Scheduler — no logging, no rate limiting.
 -- Every slot: retx → new data (PF sorted, largest block).
 -- Use for baseline testing: export LUA_SCHED=/path/to/pf_dl_simple.lua
+-- 
 
 local ffi = require("ffi")
 
