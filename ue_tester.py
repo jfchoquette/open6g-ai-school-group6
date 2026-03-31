@@ -28,6 +28,37 @@ URLLC_IMSI = os.environ.get("URLLC_IMSI", "001080000150192") # Sierra 2
 
 WRITABLE_DIRECTORY = "/mnt/shared/open6g-ai-school-group6/test-runs"
 
+MOCK = True
+
+class SierraMock():
+    async def delete_pdu(self, imei):
+        print(f"PDU deleted for device: {imei}")
+
+    async def enable_airplane_mode(self, imei):
+        print(f"Airplane mode enabled for: {imei}")
+
+    async def disconnect(self, imei):
+        print(f"Device {imei} disconnected.")
+
+    async def connect(self, imei):
+        print(f"Device {imei} connected.")
+
+    async def ping_test(self, imei, destination="8.8.8.8"):
+        """Performs a network ping test."""
+        print(f"Pinging {destination} from {imei}...")
+
+    async def execute_command(self, imei, command):
+        """Executes a raw AT command or shell command."""
+        print(f"Executing '{command}' on {imei}")
+
+    async def reboot_sierra(self, imei):
+        """Triggers a reboot of the Sierra module."""
+        print(f"Rebooting device {imei}...")
+
+    async def create_pdu(self, imei, timeout=30.0):
+        """Creates a PDU session within the specified timeout."""
+        print(f"Creating PDU for {imei} with timeout {timeout}s")
+
 class CQI(enum.Enum):
     eMBB = enum.auto()
     URLLC = enum.auto()
@@ -111,10 +142,13 @@ async def cleanup(control, imei):
     print("Disconnecting...")
     await control.disconnect(imei)
     
-async def get_imei(control):
+async def get_imei(control, mock=False):
     """
     Returns IMEI
     """
+    if mock:
+        return "MOCK"
+
     devices = await control.get_devices()
     if not devices:
         print("FATAL: No devices available!")
@@ -147,7 +181,11 @@ async def main(args):
         print("ERROR: TARGET_IMSI environment variable not set!")
         return
 
-    control = SierraControl(SERVER_URL)
+
+    if MOCK:
+        control = SierraMock()
+    else:
+        control = SierraControl(SERVER_URL)
 
     imei = await get_imei(control)
 
