@@ -57,20 +57,20 @@ end
 local olla = {}
 
 local MAX_FRAME    = 1024   -- NR frame counter wraps at 1024
-local OLLA_PERIOD  = 10     -- adjust every 10 frames (100ms)
+local OLLA_PERIOD  = 5      -- adjust every 5 frames (50ms)
 local MIN_MCS      = 0
 
 -- Per-class OLLA parameters
 local EMBB_BLER_TARGET  = 0.10
-local EMBB_OLLA_UP      = 0.10
+local EMBB_OLLA_UP      = 0.50
 local EMBB_OLLA_DOWN    = 1.00
 
 local URLLC_BLER_TARGET = 0.01
-local URLLC_OLLA_UP     = 0.05
+local URLLC_OLLA_UP     = 0.50
 local URLLC_OLLA_DOWN   = 0.50
 
-local EMBB_INIT_MCS  = 9
-local URLLC_INIT_MCS = 4
+local EMBB_INIT_MCS  = 14
+local URLLC_INIT_MCS = 9
 
 local function frames_elapsed(now, last)
     return (now - last) % MAX_FRAME
@@ -263,7 +263,7 @@ end
 ---------------------------------------------------------------------------
 -- URLLC budget cap: max fraction of free RBs URLLC can consume per slot
 ---------------------------------------------------------------------------
-local URLLC_RB_BUDGET_FRAC = 0.70
+local URLLC_RB_BUDGET_FRAC = 0.30
 
 ---------------------------------------------------------------------------
 -- URLLC deadline threshold for violation logging (microseconds)

@@ -240,8 +240,8 @@ async def main(args):
         except Exception:
             pass
 
-async def run_tests_for_embb(control, imei):
-    print("\neMBB: Running ping test to 10.45.0.1...")
+async def run_tests_for_urlcc(control, imei):
+    print("\nURLCC: Running ping test to 10.45.0.1...")
     ping_loops = 3
     
     for i in range(ping_loops):
@@ -254,11 +254,11 @@ async def run_tests_for_embb(control, imei):
             f.write("time(ms)\n")
             f.write('\n'.join(time_values))
 
-async def run_tests_for_urlcc(control, imei):
+async def run_tests_for_embb(control, imei):
     """
     iperf traffic (UDP downlink, 100Mbps, 20s)
     """
-    print("\nURLCC: Starting iperf traffic (UDP DL 100Mbps, 20s)...")
+    print("\neMBB: Starting iperf traffic (UDP DL 100Mbps, 20s)...")
     iperf_ok, iperf_output = await control.execute_command(
         imei,
         "iperf -c 10.45.0.1 -p 8037 -u -b 100M -R -t 20 -i 1",
