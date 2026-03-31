@@ -28,7 +28,7 @@ URLLC_IMSI = os.environ.get("URLLC_IMSI", "001080000150192") # Sierra 2
 
 WRITABLE_DIRECTORY = "/mnt/shared/open6g-ai-school-group6/test-runs"
 
-MOCK = True
+MOCK = False
 
 class SierraMock():
     async def delete_pdu(self, imei):
