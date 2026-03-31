@@ -30,6 +30,10 @@ URLLC_IMSI = os.environ.get("URLLC_IMSI", "001080000150192") # Sierra 2
 WRITABLE_DIRECTORY = "/mnt/shared/open6g-ai-school-group6/test-runs"
 
 class SierraMock():
+    """
+    Masks Sierra API calls do nothing.
+    Useful to test the results collection and script pipelines without using the actual limited hardware.
+    """
     async def delete_pdu(self, imei):
         print(f"PDU deleted for device: {imei}")
 
@@ -119,25 +123,29 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Sierra 5G traffic generation script")
     parser.add_argument("--reboot", action="store_true",
                         help="Reboot the Sierra modem before starting")
-    parser.add_argument("--ping_rounds", type=int, default=6)
-    parser.add_argument("--mock", action="store_true")
+    parser.add_argument("--ping_rounds", type=int, default=6, help="How many rounds of pings to execute, if the UE does ping tests (there are 10 seconds of pings per round)")
+    parser.add_argument("--mock", action="store_true", help="If true, do not execute anything on the sierra or touch lock files. For testing management script logic only.")
+    parser.add_argument("--scheduler_file_name", type=str, default="unknown_scheduler", help="Name of scheduler script for results aggregation.")
     args = parser.parse_args()
     return args
 
 
-async def graceful_cleanup(control, imei):
+async def graceful_cleanup(control, imei, args):
     """Delete PDU session and enable airplane mode before exiting."""
     print("\n[CTRL+C] Graceful shutdown — cleaning up...")
     try:
-        await cleanup(control, imei)
+        await cleanup(control, imei, args.mock())
     except Exception as e:
         print(f"[CTRL+C] Cleanup error: {e}")
     print("[CTRL+C] Cleanup complete.")
 
-async def cleanup(control, imei):
+async def cleanup(control, imei, mock=False):
     print("\nCleaning up...")
-    if os.path.exists(CQI.get().pdu_lock_file_path):
-        os.remove(CQI.get().pdu_lock_file_path)
+
+    if not mock:
+        if os.path.exists(CQI.get().pdu_lock_file_path):
+            os.remove(CQI.get().pdu_lock_file_path)
+
     await asyncio.sleep(0.5)
     print("Deleting PDU session...")
     await control.delete_pdu(imei)
@@ -174,8 +182,11 @@ async def get_imei(control, mock=False):
 
     return imei
 
-async def wait_for_other_ue_pdu_lock():
+async def wait_for_other_ue_pdu_lock(mock=False):
     print("Waiting for other UE to create PDU session before running tests...")
+    if mock:
+        return
+
     while True:
         print("waiting for ", CQI.get().other_ue_lock_file_path)
         if os.path.exists(CQI.get().other_ue_lock_file_path):
@@ -202,7 +213,7 @@ async def main(args):
 
         await create_pdu_session(control, imei)
 
-        await wait_for_other_ue_pdu_lock()
+        await wait_for_other_ue_pdu_lock(mock=args.mock)
 
         await run_tests(control, imei)
 
@@ -211,7 +222,7 @@ async def main(args):
         print("Done!")
 
     except asyncio.CancelledError:
-        await graceful_cleanup(control, imei)
+        await graceful_cleanup(control, imei, args)
 
     except Exception as e:
         print(f"\nError: {e}")
@@ -281,8 +292,9 @@ async def run_tests(control, imei):
 
 async def do_pre_run_cleanup(control, imei, reboot=False, mock=False):
 
-    if os.path.exists(CQI.get().pdu_lock_file_path):
-        os.remove(CQI.get().pdu_lock_file_path)
+    if not mock:
+        if os.path.exists(CQI.get().pdu_lock_file_path):
+            os.remove(CQI.get().pdu_lock_file_path)
 
     if reboot:
         print("\n[REBOOT] Rebooting Sierra...")
