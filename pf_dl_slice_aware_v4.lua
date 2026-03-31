@@ -72,11 +72,25 @@ local URLLC_OLLA_DOWN   = 0.50
 local EMBB_INIT_MCS  = 14
 local URLLC_INIT_MCS = 9
 
+---------------------------------------------------------------------------
+-- CQI-to-MCS floor: prevents OLLA death spiral when channel is good.
+-- Approximate CQI-to-MCS mapping (Table 1, 64QAM) used as reference.
+-- Floor = CQI_MCS - offset, so OLLA never drops absurdly below what
+-- the channel can clearly support.
+---------------------------------------------------------------------------
+local CQI_TO_APPROX_MCS = {
+    [0] = 0, [1] = 0, [2] = 2, [3] = 4, [4] = 6,
+    [5] = 8, [6] = 10, [7] = 12, [8] = 14, [9] = 16,
+    [10] = 18, [11] = 20, [12] = 22, [13] = 24, [14] = 26, [15] = 27
+}
+local EMBB_CQI_FLOOR_OFFSET  = 12    -- eMBB: floor = CQI_MCS - 12
+local URLLC_CQI_FLOOR_OFFSET = 6     -- URLLC: tighter floor
+
 local function frames_elapsed(now, last)
     return (now - last) % MAX_FRAME
 end
 
-local function olla_mcs(rnti, seed_mcs, bler, mcs_table, frame, urllc)
+local function olla_mcs(rnti, seed_mcs, bler, mcs_table, frame, urllc, cqi)
     local max_mcs = 27
     local s = olla[rnti]
 
@@ -92,18 +106,36 @@ local function olla_mcs(rnti, seed_mcs, bler, mcs_table, frame, urllc)
     local step_up     = urllc and URLLC_OLLA_UP     or EMBB_OLLA_UP
     local step_down   = urllc and URLLC_OLLA_DOWN   or EMBB_OLLA_DOWN
 
+    -- CQI-derived MCS floor: prevents death spiral when channel is good
+    local cqi_val = (cqi and cqi >= 0 and cqi <= 15) and cqi or 0
+    local cqi_mcs = CQI_TO_APPROX_MCS[cqi_val] or 0
+    local floor_offset = urllc and URLLC_CQI_FLOOR_OFFSET or EMBB_CQI_FLOOR_OFFSET
+    local cqi_floor = math.max(MIN_MCS, cqi_mcs - floor_offset)
+
     -- One adjustment per OLLA_PERIOD frames
     if frames_elapsed(frame, s.last_frame) >= OLLA_PERIOD then
         if bler < bler_target then
-            s.frac = s.frac + step_up
+            -- Accelerated recovery when MCS is far below CQI suggestion
+            local deficit = cqi_mcs - s.frac
+            local accel = 1.0
+            if deficit > 10 then
+                accel = 3.0
+            elseif deficit > 5 then
+                accel = 2.0
+            end
+            s.frac = s.frac + step_up * accel
         else
-            s.frac = s.frac - step_down
+            -- Proportional down-step: mild BLER excess = mild penalty
+            local excess_ratio = bler / math.max(bler_target, 0.001)
+            local down_scale = math.min(excess_ratio - 1.0, 2.0)
+            down_scale = math.max(0.5, down_scale)
+            s.frac = s.frac - step_down * down_scale
         end
         s.last_frame = frame
     end
 
-    -- Clamp to valid range
-    s.frac = math.max(MIN_MCS, math.min(s.frac, max_mcs))
+    -- Clamp: never below CQI floor, never above max
+    s.frac = math.max(cqi_floor, math.min(s.frac, max_mcs))
 
     return math.floor(s.frac)
 end
@@ -352,7 +384,7 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
         -- Frequency-selective: pick the `needed` contiguous RBs with best channel
         local s = find_best_channel_rbs(mask, needed, m.bwp_start, m.bwp_size, m.channel_mag_per_rb)
         if s >= 0 then
-            local mcs = olla_mcs(m.rnti, m.previous_mcs, m.bler, m.mcs_table, m.frame, true)
+            local mcs = olla_mcs(m.rnti, m.previous_mcs, m.bler, m.mcs_table, m.frame, true, m.cqi)
             m.allocated_rb = needed
             m.allocated_mcs = mcs
             m.allocated_rb_start = s
@@ -404,7 +436,7 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
         local best_start, best_len = find_largest_block(mask, m.bwp_start, m.bwp_size)
 
         if best_len >= min_rbs then
-            local mcs = olla_mcs(m.rnti, m.previous_mcs, m.bler, m.mcs_table, m.frame, false)
+            local mcs = olla_mcs(m.rnti, m.previous_mcs, m.bler, m.mcs_table, m.frame, false, m.cqi)
             m.allocated_rb = best_len
             m.allocated_mcs = mcs
             m.allocated_rb_start = best_start
