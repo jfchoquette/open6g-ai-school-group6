@@ -28,7 +28,7 @@ URLLC_IMSI = os.environ.get("URLLC_IMSI", "001080000150192") # Sierra 2
 
 WRITABLE_DIRECTORY = "/mnt/shared/open6g-ai-school-group6/test-runs"
 
-MOCK = False
+MOCK = True
 
 class SierraMock():
     async def delete_pdu(self, imei):
@@ -175,10 +175,10 @@ async def get_imei(control, mock=False):
 async def wait_for_other_ue_pdu_lock():
     print("Waiting for other UE to create PDU session before running tests...")
     while True:
+        print("waiting for ", CQI.get().other_ue_lock_file_path)
         if os.path.exists(CQI.get().other_ue_lock_file_path):
             break
         await asyncio.sleep(0.5)
-
 
 async def main(args):
     if not TARGET_IMSI:
