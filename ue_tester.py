@@ -26,28 +26,47 @@ EMBB_IMSI = os.environ.get("EMBB_IMSI", "001080000150191") # Sierra 1
 
 URLLC_IMSI = os.environ.get("URLLC_IMSI", "001080000150192") # Sierra 2
 
+WRITABLE_DIRECTORY = "/mnt/shared/open6g-ai-school-group6/test-runs"
+
 class CQI(enum.Enum):
     eMBB = enum.auto()
     URLLC = enum.auto()
 
-def ue_5qi():
-    """
-    Decides 5QI to help automatically determine which tests to run and format output.
-    Assumes that the IMSIs have already been configured accordingly in the core.
-    Hard-coded defaults should be fine.
+    @staticmethod
+    def get() -> 'CQI':
+        """
+        Decides 5QI to help automatically determine which tests to run and format output.
+        Assumes that the IMSIs have already been configured accordingly in the core.
+        Hard-coded defaults should be fine.
 
-    Returns:
-        CQI: 5QI for given IMSI
-    """
+        Returns:
+            CQI: 5QI for given IMSI
+        """
 
-    if TARGET_IMSI == EMBB_IMSI:
-        return CQI.eMBB
-    
-    if TARGET_IMSI == URLLC_IMSI:
-        return CQI.URLLC
+        if TARGET_IMSI == EMBB_IMSI:
+            return CQI.eMBB
+        
+        if TARGET_IMSI == URLLC_IMSI:
+            return CQI.URLLC
 
-    print(f"FATAL: {TARGET_IMSI} is not a configured IMSI!")
-    sys.exit(1)
+        print(f"FATAL: {TARGET_IMSI} is not a configured IMSI!")
+        sys.exit(1)
+
+    @property
+    def pdu_lock_file_path(self):
+
+        cqi = self.as_string()
+        return f"{WRITABLE_DIRECTORY}/{cqi}-pdu.lock"
+
+    def as_string(self):
+        if self == CQI.eMBB:
+            return "embb"
+
+        if self == CQI.URLLC:
+            return "urlcc"
+
+        print("FATAL: Invalid 5QI")
+        sys.exit(1)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Sierra 5G traffic generation script")
@@ -116,29 +135,10 @@ async def main(args):
 
         await do_pre_run_cleanup(control, imei, reboot=args.reboot)
 
-        # 6. Create PDU session (infinite retries)
-        pdu_ok = False
-        attempt = 1
-        while True:
-            print(f"\nCreating PDU session (attempt {attempt})...")
-            pdu_ok = await control.create_pdu(imei, timeout=30.0)
-            if pdu_ok:
-                break
-            print(f"Attempt {attempt} failed. Cleaning up before next attempt...")
-            await control.delete_pdu(imei)
-            await asyncio.sleep(5)
-            attempt += 1
+        await create_pdu_session(control, imei)
 
-        print("\n*** PDU session active ***")
-        
-        # TODO
-        # WAIT HERE UNTIL SOME EVENT (MANUAL INTERVENTION)
-        # OR TIMER
-        # OR WAIT FOR BOTH UEs
-        
-        # Pause and wait for user input without blocking the asyncio event loop
         loop = asyncio.get_running_loop()
-        
+        # TODO - update to automatically proceed if both locks exist
         await loop.run_in_executor(None, input, "Press Enter to proceed with tests...\n")
 
         await run_tests(control, imei)
@@ -188,13 +188,17 @@ async def run_tests_for_urlcc(control, imei):
         print(iperf_output)
 
 async def run_tests(control, imei):
-    if ue_5qi() == CQI.eMBB:
+    if CQI.get() == CQI.eMBB:
         await run_tests_for_embb(control, imei)
     
-    if ue_5qi() == CQI.URLLC:
+    if CQI.get() == CQI.URLLC:
         await run_tests_for_urlcc(control, imei)
 
 async def do_pre_run_cleanup(control, imei, reboot=False):
+
+    if os.path.exists(CQI.get().pdu_lock_file_path):
+        os.remove(CQI.get().pdu_lock_file_path)
+
     if reboot:
         print("\n[REBOOT] Rebooting Sierra...")
         await control.reboot_sierra(imei)
@@ -210,6 +214,23 @@ async def do_pre_run_cleanup(control, imei, reboot=False):
     print("Disabling airplane mode...")
     await control.disable_airplane_mode(imei)
     await asyncio.sleep(15)
+
+async def create_pdu_session(control, imei):
+    pdu_ok = False
+    attempt = 1
+    while True:
+        print(f"\nCreating PDU session (attempt {attempt})...")
+        pdu_ok = await control.create_pdu(imei, timeout=30.0)
+        if pdu_ok:
+            break
+        print(f"Attempt {attempt} failed. Cleaning up before next attempt...")
+        await control.delete_pdu(imei)
+        await asyncio.sleep(5)
+        attempt += 1
+
+    print("\n*** PDU session active ***")
+    with open(CQI.get().pdu_lock_file_path, 'w') as lock:
+        lock.write(f"Exists: {TARGET_IMSI}\n")
 
 def run():
     args = parse_args()
