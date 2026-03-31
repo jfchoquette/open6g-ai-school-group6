@@ -15,6 +15,7 @@ import os
 import signal
 import sys
 import enum
+import re
 sys.path.insert(0, '.')
 
 from sierra_control import SierraControl
