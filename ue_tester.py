@@ -60,18 +60,22 @@ async def graceful_cleanup(control, imei):
     """Delete PDU session and enable airplane mode before exiting."""
     print("\n[CTRL+C] Graceful shutdown — cleaning up...")
     try:
-        await asyncio.sleep(0.5)
-        print("Deleting PDU session...")
-        await control.delete_pdu(imei)
-        await asyncio.sleep(5)
-        print("Enabling airplane mode...")
-        await control.enable_airplane_mode(imei)
-        await asyncio.sleep(5)
-        print("Disconnecting...")
-        await control.disconnect(imei)
+        await cleanup(control, imei)
     except Exception as e:
         print(f"[CTRL+C] Cleanup error: {e}")
     print("[CTRL+C] Cleanup complete.")
+
+async def cleanup(control, imei):
+    print("\nCleaning up...")
+    await asyncio.sleep(0.5)
+    print("Deleting PDU session...")
+    await control.delete_pdu(imei)
+    await asyncio.sleep(5)
+    print("Enabling airplane mode...")
+    await control.enable_airplane_mode(imei)
+    await asyncio.sleep(5)
+    print("Disconnecting...")
+    await control.disconnect(imei)
 
 
 async def main(args):
@@ -148,12 +152,8 @@ async def main(args):
 
         await run_tests(control, imei)
 
-        # 10. Cleanup
-        print("\nCleaning up...")
-        await control.delete_pdu(imei)
-        await asyncio.sleep(30)
-        await control.enable_airplane_mode(imei)
-        await asyncio.sleep(30)
+        await cleanup(control, imei)
+
         print("Done!")
 
     except asyncio.CancelledError:
@@ -174,7 +174,7 @@ async def main(args):
             await control.disconnect(imei)
         except Exception:
             pass
-        
+
 async def run_tests_for_embb(control, imei):
     print("\neMBB: Running ping test to 10.45.0.1...")
     ping_ok, ping_output = await control.ping_test(imei, "10.45.0.1", timeout=30.0)
