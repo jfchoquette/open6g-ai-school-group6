@@ -159,7 +159,7 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
     -----------------------------------------------------------------------
     -- Local helpers
     -----------------------------------------------------------------------
-  
+
 
     local function get_service_class(m)
         local q = tonumber(m.fiveQI)
@@ -436,7 +436,7 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
         -------------------------------------------------------------------
         -- Compute share shift from a balanced baseline
         -------------------------------------------------------------------
-        local dynamic_urllc_share = 0.50
+        local dynamic_urllc_share = 0.25
 
         if urllc_below_target > 0 then
             local urllc_pressure =
