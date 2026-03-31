@@ -29,8 +29,6 @@ URLLC_IMSI = os.environ.get("URLLC_IMSI", "001080000150192") # Sierra 2
 
 WRITABLE_DIRECTORY = "/mnt/shared/open6g-ai-school-group6/test-runs"
 
-MOCK = False
-
 class SierraMock():
     async def delete_pdu(self, imei):
         print(f"PDU deleted for device: {imei}")
@@ -121,6 +119,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Sierra 5G traffic generation script")
     parser.add_argument("--reboot", action="store_true",
                         help="Reboot the Sierra modem before starting")
+    parser.add_argument("--ping_rounds", type=int, default=3, description="How many rounds of pings to execute, if the UE does ping tests (there are 10 seconds of pings per round)")
+    parser.add_argument("--mock", action="store_true", description="If true, do not execute anything on the sierra. For testing this script's logic only.")
     args = parser.parse_args()
     return args
 
@@ -188,12 +188,12 @@ async def main(args):
         return
 
 
-    if MOCK:
+    if args.mock:
         control = SierraMock()
     else:
         control = SierraControl(SERVER_URL)
 
-    imei = await get_imei(control, mock=MOCK)
+    imei = await get_imei(control, mock=args.mock)
 
     try:
         await control.connect(imei)
