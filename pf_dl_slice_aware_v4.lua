@@ -65,9 +65,12 @@ local EMBB_BLER_TARGET  = 0.10
 local EMBB_OLLA_UP      = 0.10
 local EMBB_OLLA_DOWN    = 1.00
 
-local URLLC_BLER_TARGET = 0.001
+local URLLC_BLER_TARGET = 0.01
 local URLLC_OLLA_UP     = 0.05
-local URLLC_OLLA_DOWN   = 1.00
+local URLLC_OLLA_DOWN   = 0.50
+
+local EMBB_INIT_MCS  = 9
+local URLLC_INIT_MCS = 4
 
 local function frames_elapsed(now, last)
     return (now - last) % MAX_FRAME
@@ -78,7 +81,8 @@ local function olla_mcs(rnti, seed_mcs, bler, mcs_table, frame, urllc)
     local s = olla[rnti]
 
     if not s then
-        local init = seed_mcs > 0 and seed_mcs or 4
+        local default_mcs = urllc and URLLC_INIT_MCS or EMBB_INIT_MCS
+        local init = seed_mcs > 0 and seed_mcs or default_mcs
         s = { frac = init + 0.0, last_frame = frame }
         olla[rnti] = s
     end
@@ -259,12 +263,13 @@ end
 ---------------------------------------------------------------------------
 -- URLLC budget cap: max fraction of free RBs URLLC can consume per slot
 ---------------------------------------------------------------------------
-local URLLC_RB_BUDGET_FRAC = 0.50
+local URLLC_RB_BUDGET_FRAC = 0.70
 
 ---------------------------------------------------------------------------
 -- URLLC deadline threshold for violation logging (microseconds)
 ---------------------------------------------------------------------------
-local URLLC_DEADLINE_US = 1000  -- 1 ms
+local URLLC_DEADLINE_US = 2000  -- 2 ms
+local URLLC_DEADLINE_LOG_INTERVAL = 100  -- print every Nth violation
 
 ---------------------------------------------------------------------------
 -- Puncturing compensation state (per RNTI)
@@ -272,6 +277,7 @@ local URLLC_DEADLINE_US = 1000  -- 1 ms
 -- Used to boost PF priority of eMBB UEs that lose RBs to URLLC.
 ---------------------------------------------------------------------------
 local puncture_rho = {}           -- [rnti] = rho  (0.0 .. 1.0)
+local deadline_warn_count = {}    -- [rnti] = count of deadline violations
 local RHO_EMA_ALPHA = 0.05        -- EMA smoothing: higher = faster tracking
 local RHO_FLOOR     = 0.001       -- clamp (1 - rho) away from zero
 
@@ -354,11 +360,16 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
             urllc_rbs_used = urllc_rbs_used + needed
         end
 
-        -- Log deadline violations
+        -- Log deadline violations (rate-limited)
         if entry.hol > URLLC_DEADLINE_US then
-            print(string.format(
-                "[DL %d.%d] URLLC DEADLINE WARNING: UE %04x hol=%d us > %d us threshold",
-                m.frame, m.slot, m.rnti, entry.hol, URLLC_DEADLINE_US))
+            local rnti = m.rnti
+            deadline_warn_count[rnti] = (deadline_warn_count[rnti] or 0) + 1
+            if deadline_warn_count[rnti] % URLLC_DEADLINE_LOG_INTERVAL == 0 then
+                print(string.format(
+                    "[DL %d.%d] URLLC DEADLINE WARNING: UE %04x hol=%d us > %d us [#%d]",
+                    m.frame, m.slot, rnti, entry.hol, URLLC_DEADLINE_US,
+                    deadline_warn_count[rnti]))
+            end
         end
     end
 
