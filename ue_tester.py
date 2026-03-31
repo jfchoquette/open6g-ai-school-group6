@@ -13,7 +13,6 @@ import asyncio
 import os
 import signal
 import sys
-import re
 sys.path.insert(0, '.')
 
 from sierra_control import SierraControl
@@ -127,8 +126,6 @@ async def main(args):
             print("\nRunning ping test to 10.45.0.1...")
             ping_ok, ping_output = await control.ping_test(imei, "10.45.0.1", timeout=30.0)
             print(f"Ping result: {'OK' if ping_ok else 'FAILED'}")
-            # if ping_output:
-            #     print(ping_output)
             if ping_output:
                 time_values = re.findall(r'time=([0-9.]+)', ping_output)
                 with open('ue_ping_output.csv', 'w') as f:
@@ -144,8 +141,6 @@ async def main(args):
                 timeout=60.0
             )
             print(f"iperf result: {'OK' if iperf_ok else 'FAILED'}")
-            # if iperf_output:
-            #     print(iperf_output)
             if iperf_output:
                 print(iperf_output)
                 with open('iperf_output.csv', 'w') as f:
