@@ -187,7 +187,7 @@ async def main(args):
     else:
         control = SierraControl(SERVER_URL)
 
-    imei = await get_imei(control)
+    imei = await get_imei(control, mock=MOCK)
 
     try:
         await control.connect(imei)
