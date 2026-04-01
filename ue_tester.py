@@ -240,7 +240,7 @@ async def main(args):
         except Exception:
             pass
 
-async def run_tests_for_urlcc(control, imei):
+async def run_tests_for_urlcc(control, imei, args):
     print("\nURLCC: Running ping test to 10.45.0.1...")
     ping_loops = 3
     
@@ -250,11 +250,13 @@ async def run_tests_for_urlcc(control, imei):
         if ping_output:
             print(ping_output)
         time_values = re.findall(r'time=([0-9.]+)', ping_output)
-        with open('results/urlcc_output.csv', 'w') as f:
+
+        results_dir = find_results_dir(args.scheduler_file_name)
+        with open(f'{WRITABLE_DIRECTORY}/{results_dir}/urlcc_ping_results.csv', 'w') as f:
             f.write("time(ms)\n")
             f.write('\n'.join(time_values))
 
-async def run_tests_for_embb(control, imei):
+async def run_tests_for_embb(control, imei, args):
     """
     iperf traffic (UDP downlink, 100Mbps, 20s)
     """
@@ -267,7 +269,8 @@ async def run_tests_for_embb(control, imei):
     print(f"iperf result: {'OK' if iperf_ok else 'FAILED'}")
     if iperf_output:
         print(iperf_output)
-        with open('iperf_output.csv', 'w') as f:
+        results_dir = find_results_dir(args.scheduler_file_name)
+        with open(f'{WRITABLE_DIRECTORY}/{results_dir}/embb_iperf_results.csv', 'w') as f:
             f.write("Interval_Start(sec),Interval_End(sec),Transfer,Transfer_Unit,Bandwidth(Mbits/sec),Jitter(ms),Lost_Datagrams,Total_Datagrams,Packet_Loss(%)\n")
 
             for line in iperf_output.splitlines():
@@ -296,12 +299,12 @@ async def run_tests_for_embb(control, imei):
 
                     f.write(f"{interval_start},{interval_end},{transfer},{transfer_unit},{bandwidth},{jitter},{lost},{total},{loss_pct}\n")
 
-async def run_tests(control, imei):
+async def run_tests(control, imei, args):
     if CQI.get() == CQI.eMBB:
-        await run_tests_for_embb(control, imei)
+        await run_tests_for_embb(control, imei, args)
     
     if CQI.get() == CQI.URLLC:
-        await run_tests_for_urlcc(control, imei)
+        await run_tests_for_urlcc(control, imei, args)
 
 async def do_pre_run_cleanup(control, imei, args):
 
@@ -309,7 +312,8 @@ async def do_pre_run_cleanup(control, imei, args):
         if os.path.exists(CQI.get().pdu_lock_file_path):
             os.remove(CQI.get().pdu_lock_file_path)
 
-        create_results_dir(args.scheduler_file_name)
+            if CQI.get() == CQI.URLLC:
+                create_results_dir(args.scheduler_file_name)
 
     if args.reboot:
         print("\n[REBOOT] Rebooting Sierra...")
@@ -320,7 +324,7 @@ async def do_pre_run_cleanup(control, imei, args):
     print("\nDeleting any existing PDU session...")
     await control.delete_pdu(imei)
     print("Waiting 30s for cleanup...")
-    sleep_seconds = 15 if not mock else 0
+    sleep_seconds = 15 if not args.mock else 0
     await asyncio.sleep(sleep_seconds)
 
     # Disable airplane mode
@@ -345,8 +349,6 @@ async def create_pdu_session(control, imei):
     with open(CQI.get().pdu_lock_file_path, 'w') as lock:
         lock.write(f"Exists: {TARGET_IMSI}\n")
 
-# This isn't going to work because we need to have the two runners agree on the same ID
-# I guess I could just have it grab the highest number
 def create_results_dir(scheduler_name):
     """
     Directory in persistent storage to save results.
@@ -367,6 +369,20 @@ def create_results_dir(scheduler_name):
     except OSError as e:
         print(f"Error creating directory {dir_name}: {e}")
         return None
+    
+def find_results_dir(scheduler_name) -> str:
+    """
+    """
+    counter = 1
+    base_name = scheduler_name
+    dir_name = f"{base_name}-{counter}"
+
+    while os.path.exists(dir_name):
+        counter += 1
+        dir_name = f"{base_name}-{counter}"
+
+    counter -= 1
+    return dir_name
 
 def save_results():
     """
