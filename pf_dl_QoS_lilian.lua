@@ -160,6 +160,7 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
             return "URLLC"
         else
             return "eMBB"
+        end
     end
     
 
