@@ -1,3 +1,145 @@
+--------------------------------------------------------------------------- DL PF Scheduler with OLLA MCS adaptation (every 10 frames / 100ms).
+-- Every slot: retx → new data (PF sorted, largest block).
+-- Use: export LUA_SCHED=/path/to/pf_dl_simple.lua
+
+local ffi = require("ffi")
+
+ffi.cdef[[
+typedef struct {
+    uint16_t rnti;
+    uint8_t nr_of_layers;
+    uint32_t pending_bytes;
+    float throughput;
+    uint8_t previous_mcs;
+    int ue_type;
+    uint16_t required_rbs;
+    uint8_t required_mcs;
+    uint16_t cqi;
+    int uid;
+    int mcs_table;
+    float bler;
+    int slot;
+    int frame;
+    uint64_t fiveQI;
+    int16_t channel_mag_per_rb[272];
+    uint32_t bwp_start;
+    uint32_t bwp_size;
+    int16_t dl_rsrp;
+    uint64_t hol_delay_us;
+    uint16_t allocated_rb;
+    uint8_t allocated_mcs;
+    uint16_t allocated_rb_start;
+} dl_ue_metric_t;
+]]
+
+local UE_TYPE_NEW_DATA = 0
+local UE_TYPE_HARQ_RETX = 1
+
+---------------------------------------------------------------------------
+-- OLLA state per RNTI
+---------------------------------------------------------------------------
+local olla = {}
+
+local MAX_FRAME    = 1024   -- NR frame counter wraps at 1024
+local OLLA_PERIOD  = 10     -- adjust every 10 frames (100ms)
+local BLER_TARGET  = 0.10
+local OLLA_UP      = 0.10   -- step up per period when BLER < target
+local OLLA_DOWN    = 1.00   -- step down per period when BLER >= target
+local MIN_MCS      = 0
+
+local function frames_elapsed(now, last)
+    return (now - last) % MAX_FRAME
+end
+
+local function olla_mcs(rnti, seed_mcs, bler, mcs_table, frame)
+    local max_mcs = 27
+    local s = olla[rnti]
+
+    if not s then
+        local init = seed_mcs > 0 and seed_mcs or 4
+        s = { frac = init + 0.0, last_frame = frame }
+        olla[rnti] = s
+    end
+
+    -- One adjustment per OLLA_PERIOD frames
+    if frames_elapsed(frame, s.last_frame) >= OLLA_PERIOD then
+        if bler < BLER_TARGET then
+            s.frac = s.frac + OLLA_UP
+        else
+            s.frac = s.frac - OLLA_DOWN
+        end
+        s.last_frame = frame
+    end
+
+    -- Clamp to valid range
+    s.frac = math.max(MIN_MCS, math.min(s.frac, max_mcs))
+
+    return math.floor(s.frac)
+end
+
+---------------------------------------------------------------------------
+-- RB mask helpers
+---------------------------------------------------------------------------
+
+-- Find first contiguous free RBs in mask
+local function find_free_rbs(mask, needed, bwp_start, bwp_size)
+    local count = 0
+    for rb = 0, bwp_size - 1 do
+        local idx = bwp_start + rb + 1  -- Lua 1-indexed
+        if mask:sub(idx, idx) ~= 'X' then
+            count = count + 1
+            if count == needed then
+                return rb - needed + 1  -- 0-indexed start within BWP
+            end
+        else
+            count = 0
+        end
+    end
+    return -1
+end
+
+-- Mark RBs as used in mask string
+local function mark_used(mask, start_rb, num_rbs, bwp_start)
+    local chars = {}
+    for i = 1, #mask do chars[i] = mask:sub(i, i) end
+    for rb = start_rb, start_rb + num_rbs - 1 do
+        chars[bwp_start + rb + 1] = 'X'
+    end
+    return table.concat(chars)
+end
+
+-- Find largest contiguous free block
+local function find_largest_block(mask, bwp_start, bwp_size)
+    local best_start, best_len = -1, 0
+    local cur_start, cur_len = -1, 0
+    for rb = 0, bwp_size - 1 do
+        local idx = bwp_start + rb + 1
+        if mask:sub(idx, idx) ~= 'X' then
+            if cur_len == 0 then cur_start = rb end
+            cur_len = cur_len + 1
+        else
+            if cur_len > best_len then
+                best_start = cur_start
+                best_len = cur_len
+            end
+            cur_len = 0
+        end
+    end
+    if cur_len > best_len then
+        best_start = cur_start
+        best_len = cur_len
+    end
+    return best_start, best_len
+end
+
+---------------------------------------------------------------------------
+-- Debug logging (periodic)
+---------------------------------------------------------------------------
+local debug_counter = 0
+
+---------------------------------------------------------------------------
+-- Main entry point called from C every DL slot
+---------------------------------------------------------------------------
 function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_string)
     local metrics = ffi.cast("dl_ue_metric_t*", metrics_ptr)
     local mask = rb_mask_string
