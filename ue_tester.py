@@ -311,9 +311,9 @@ async def do_pre_run_cleanup(control, imei, args):
     if os.path.exists(CQI.get().pdu_lock_file_path):
         os.remove(CQI.get().pdu_lock_file_path)
 
-        if CQI.get() == CQI.URLLC:
-            print("It is URLCC")
-            create_results_dir(args.scheduler_file_name)
+    if CQI.get() == CQI.URLLC:
+        print("It is URLCC")
+        create_results_dir(args.scheduler_file_name)
 
     if args.reboot:
         print("\n[REBOOT] Rebooting Sierra...")
