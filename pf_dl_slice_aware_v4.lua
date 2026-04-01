@@ -12,9 +12,13 @@
 --     Acceleration factor capped at 1.5x (was 3x).
 -- v4.1 tuning (based on Run 2 results):
 --   * Faster ceiling relaxation: 0.2→0.5 per period (was ~300 frames stuck)
---   * Max down-step capped at 4 MCS per event (prevents cascade crash)
---   * Minimum ceiling = CQI_MCS - 6 (CQI=15 → ceiling never below 21)
+--   * Max down-step capped at 3 MCS per event (prevents cascade crash)
+--   * Minimum ceiling = CQI_MCS - 4 (CQI=11 → ceiling never below 16)
 --   * URLLC RB budget reduced 30%→15% (latency 25ms << 50ms target)
+-- v4.2 tuning (based on Run 3 — CQI=11 eMBB stuck at MCS 8):
+--   * eMBB CQI floor offset 12→6 (floor = CQI_MCS-6, so CQI=11→floor=14)
+--   * BLER dead-zone: no down-step when BLER < 1.3× target (prevents cascade)
+--   * eMBB OLLA_DOWN 1.0→0.5 (less aggressive per-step)
 -- Retained from v3: freq-selective URLLC, budget cap, deadline logging, per-class OLLA.
 -- Every slot: retx → URLLC new data (best-channel fit) → eMBB new data (compensated PF, largest block).
 -- Traffic class determined by fiveQI (3GPP TS 23.501 Table 5.7.4-1).
@@ -73,7 +77,7 @@ local MIN_MCS      = 0
 -- Per-class OLLA parameters
 local EMBB_BLER_TARGET  = 0.10
 local EMBB_OLLA_UP      = 0.50
-local EMBB_OLLA_DOWN    = 1.00
+local EMBB_OLLA_DOWN    = 0.50
 
 local URLLC_BLER_TARGET = 0.01
 local URLLC_OLLA_UP     = 0.50
@@ -93,7 +97,7 @@ local CQI_TO_APPROX_MCS = {
     [5] = 8, [6] = 10, [7] = 12, [8] = 14, [9] = 16,
     [10] = 18, [11] = 20, [12] = 22, [13] = 24, [14] = 26, [15] = 27
 }
-local EMBB_CQI_FLOOR_OFFSET  = 12    -- eMBB: floor = CQI_MCS - 12
+local EMBB_CQI_FLOOR_OFFSET  = 6     -- eMBB: floor = CQI_MCS - 6 (CQI=11→floor=14, CQI=15→floor=21)
 local URLLC_CQI_FLOOR_OFFSET = 6     -- URLLC: tighter floor
 
 local function frames_elapsed(now, last)
@@ -110,8 +114,9 @@ end
 local CEILING_BLER_MULT = 2.0   -- trigger ceiling when BLER > 2× target
 local CEILING_MARGIN    = 2     -- stay this many MCS below the last failure
 local CEILING_RELAX     = 0.5   -- relax ceiling per OLLA period when BLER good (was 0.2)
-local CEILING_MIN_OFFSET = 6    -- ceiling never below CQI_MCS - this (prevents getting stuck)
-local MAX_DOWN_STEP     = 4.0   -- max MCS drop per OLLA event (prevents cascade crash)
+local CEILING_MIN_OFFSET = 4    -- ceiling never below CQI_MCS - this (CQI=11→ceil≥16)
+local MAX_DOWN_STEP     = 3.0   -- max MCS drop per OLLA event (prevents cascade crash)
+local BLER_DEADZONE     = 1.3   -- no down-step when BLER < DEADZONE × target
 
 local function olla_mcs(rnti, seed_mcs, bler, mcs_table, frame, urllc, cqi)
     local max_mcs = 27
@@ -164,21 +169,26 @@ local function olla_mcs(rnti, seed_mcs, bler, mcs_table, frame, urllc, cqi)
                 s.ceiling = math.min(max_mcs, s.ceiling + CEILING_RELAX)
             end
         else
-            -- Proportional down-step: mild BLER excess = mild penalty
+            -- Proportional down-step with dead-zone to prevent cascade
             local excess_ratio = bler / math.max(bler_target, 0.001)
-            local down_scale = math.min(excess_ratio - 1.0, 2.0)
-            down_scale = math.max(0.5, down_scale)
-            local drop = math.min(step_down * down_scale, MAX_DOWN_STEP)
-            s.frac = s.frac - drop
 
-            -- If BLER is way above target, record a ceiling
-            if excess_ratio >= CEILING_BLER_MULT then
-                local new_ceil = s.frac + drop  -- pre-reduction value
-                -- Enforce minimum ceiling based on CQI
-                local min_ceil = math.max(MIN_MCS, cqi_mcs - CEILING_MIN_OFFSET)
-                new_ceil = math.max(new_ceil, min_ceil)
-                s.ceiling = math.min(s.ceiling, new_ceil)
+            if excess_ratio >= BLER_DEADZONE then
+                -- Only step down when BLER meaningfully exceeds target
+                local down_scale = math.min(excess_ratio - 1.0, 2.0)
+                down_scale = math.max(0.5, down_scale)
+                local drop = math.min(step_down * down_scale, MAX_DOWN_STEP)
+                s.frac = s.frac - drop
+
+                -- If BLER is way above target, record a ceiling
+                if excess_ratio >= CEILING_BLER_MULT then
+                    local new_ceil = s.frac + drop  -- pre-reduction value
+                    -- Enforce minimum ceiling based on CQI
+                    local min_ceil = math.max(MIN_MCS, cqi_mcs - CEILING_MIN_OFFSET)
+                    new_ceil = math.max(new_ceil, min_ceil)
+                    s.ceiling = math.min(s.ceiling, new_ceil)
+                end
             end
+            -- else: BLER is in dead-zone (target < bler < 1.3×target), hold steady
         end
         s.last_frame = frame
     end
