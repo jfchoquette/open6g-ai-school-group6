@@ -158,9 +158,9 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
         -- 69 -> URLLC
         -- otherwise -> eMBB
         if m.uid == 0 then
-            return "URLLC"
-        else
             return "eMBB"
+        else
+            return "URLLC"
         end
     end
 
