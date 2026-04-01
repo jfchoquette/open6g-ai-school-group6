@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter
 import glob
+import os
 
 # 1. Find ALL data files dynamically
 v4_files = glob.glob('../test-runs/v4_run*.csv')
@@ -56,7 +57,7 @@ def get_aggregated_delays(file_list, label_prefix):
     combined_embb = pd.concat(all_embb_delays, ignore_index=True) if all_embb_delays else pd.Series(dtype=float)
     combined_urllc = pd.concat(all_urllc_delays, ignore_index=True) if all_urllc_delays else pd.Series(dtype=float)
 
-    print(f" -> [{label_prefix} Aggregate]: Total eMBB packets: {len(combined_embb)}, Total URLLC packets: {len(combined_urllc)}")
+    print(f" -> [{label_prefix} Aggregate]: Total eMBB packets: {len(combined_embb):,}, Total URLLC packets: {len(combined_urllc):,}")
     return combined_embb, combined_urllc
 
 # Extract and Aggregate
@@ -77,47 +78,66 @@ simple_embb_x, simple_embb_y = compute_cdf(simple_embb)
 simple_urllc_x, simple_urllc_y = compute_cdf(simple_urllc)
 
 # 4. Create the Plot
-fig, ax = plt.subplots(figsize=(11, 7))
+fig, ax = plt.subplots(figsize=(8, 6))
 
-# --- Plot Baseline Scheduler (Dashed Lines) ---
+# --- Presentation Styling Parameters ---
+color_baseline_urllc = 'red'
+color_proposed_embb = 'blue'
+color_baseline_embb = 'purple'
+color_proposed_urllc = 'orange'
+
+marker_embb = 'X'
+line_embb = '-'
+
+marker_urllc = 'o'
+line_urllc = '-'
+
+# Spacing for markers so they don't overlap into a solid block (10% intervals)
+me = 0.1 
+
+# --- Plot Baseline Scheduler ---
 if len(simple_embb_x) > 0:
-    ax.plot(simple_embb_x, simple_embb_y, color='gray', linestyle='--', linewidth=2, 
-            label=f'Baseline eMBB (N={len(simple_embb):,})')
+    ax.plot(simple_embb_x, simple_embb_y, color=color_baseline_embb, linestyle=line_embb, linewidth=2, 
+        label=f'Baseline [eMBB]')
 if len(simple_urllc_x) > 0:
-    ax.plot(simple_urllc_x, simple_urllc_y, color='orange', linestyle='--', linewidth=2.5, 
-            label=f'Baseline URLLC (N={len(simple_urllc):,})')
+    ax.plot(simple_urllc_x, simple_urllc_y, color=color_baseline_urllc, linestyle=line_urllc, linewidth=2.5, 
+            label=f'Baseline [URLLC]')
 
-# --- Plot Proposed v4 Scheduler (Solid, Bold Lines) ---
+# --- Plot Proposed v4 Scheduler ---
 if len(v4_embb_x) > 0:
-    ax.plot(v4_embb_x, v4_embb_y, color='blue', linewidth=2.5, 
-            label=f'Proposed eMBB (N={len(v4_embb):,})')
+    ax.plot(v4_embb_x, v4_embb_y, color=color_proposed_embb, linestyle=line_embb, linewidth=2.5, 
+            label=f'Proposed [eMBB]')
 if len(v4_urllc_x) > 0:
-    ax.plot(v4_urllc_x, v4_urllc_y, color='red', linewidth=3.5, zorder=5, 
-            label=f'Proposed URLLC (N={len(v4_urllc):,})')
+    ax.plot(v4_urllc_x, v4_urllc_y, color=color_proposed_urllc, linestyle=line_urllc, linewidth=3.5, zorder=5, 
+            label=f'Proposed [URLLC]')
 
-# 5. Add the Hackathon constraint lines
-ax.axvline(x=50, color='green', linestyle='--', linewidth=2.5, label='SLA Deadline (50ms)', zorder=1)
-ax.axhline(y=0.99, color='black', linestyle=':', linewidth=1.5, label='99th Percentile Target', zorder=1)
+# 5. Add the Hackathon constraint lines and text
+ax.axvline(x=50, color='green', linestyle='--', linewidth=2.5, zorder=1)
+ax.text(0.22, 0.75, 'SLA Deadline (50ms) →', color='green', fontsize=14, fontweight='bold', rotation=0, va='center')
 
-ax.axvspan(0.01, 50, color='green', alpha=0.05, label='URLLC Safe Zone')
+# ax.axvspan(0.01, 50, color='green', alpha=0.05, label='URLLC Safe Zone')
 
 # 6. Formatting
-ax.set_title('Aggregated Internal MAC Latency CDF (All Test Runs)', fontsize=16, fontweight='bold')
-ax.set_xlabel('Head-of-Line Queue Delay (ms)', fontsize=13)
-ax.set_ylabel('Cumulative Probability', fontsize=13)
+ax.set_title('Latency CDF: Baseline vs Proposed', fontsize=16, fontweight='bold')
+ax.set_xlabel('Delay (ms)', fontsize=14)
+ax.set_ylabel('Cumulative Probability', fontsize=14)
 
 # Set X-axis to Log Scale
 ax.set_xscale('log')
 ax.xaxis.set_major_formatter(ScalarFormatter())
-ax.set_xticks([0.1, 1, 10, 50, 100, 300]) 
+ax.set_xticks([0.1, 1, 10, 50, 300]) 
 
 ax.set_ylim(0, 1.05)
 ax.grid(True, which='both', linestyle=':', alpha=0.7)
 
-ax.legend(loc='lower right', fontsize=11, framealpha=0.9)
+ax.tick_params(axis='both', which='major', labelsize=14)
+
+# Keep your legend settings
+ax.legend(loc='center left', bbox_to_anchor=(0.05, 0.5), fontsize=14, framealpha=0.9)
 
 # 7. Save and Finish
 plt.tight_layout()
+os.makedirs('../figures', exist_ok=True)
 output_name = '../figures/aggregated_latency_cdf_comparison.png'
 plt.savefig(output_name, dpi=300, bbox_inches='tight')
 print(f"\nSuccess! Aggregated CDF Plot saved as {output_name}")

@@ -80,42 +80,48 @@ simple_embb_x, simple_embb_y = compute_cdf(simple_embb)
 simple_urllc_x, simple_urllc_y = compute_cdf(simple_urllc)
 
 # 4. Create the Plot
-fig, ax = plt.subplots(figsize=(12, 7))
+fig, ax = plt.subplots(figsize=(8, 6))
 
 # --- Plot Baseline Scheduler (Dashed Lines) ---
 if len(simple_embb_x) > 0:
-    ax.plot(simple_embb_x, simple_embb_y, color='gray', linestyle='--', linewidth=2, 
-            label=f'Baseline eMBB (N={len(simple_embb):,})')
+    ax.plot(simple_embb_x, simple_embb_y, color='purple', linestyle='-', linewidth=2, 
+            label=f'Baseline [eMBB]')
 if len(simple_urllc_x) > 0:
-    ax.plot(simple_urllc_x, simple_urllc_y, color='orange', linestyle='--', linewidth=2.5, 
-            label=f'Baseline URLLC (N={len(simple_urllc):,})')
+    ax.plot(simple_urllc_x, simple_urllc_y, color='red', linestyle='-', linewidth=2.5, 
+            label=f'Baseline [URLLC]')
 
 # --- Plot Proposed v4 Scheduler (Solid, Bold Lines) ---
 if len(v4_embb_x) > 0:
     ax.plot(v4_embb_x, v4_embb_y, color='blue', linewidth=3.5, zorder=4,
-            label=f'Proposed eMBB (N={len(v4_embb):,})')
+            label=f'Proposed [eMBB]')
 if len(v4_urllc_x) > 0:
-    ax.plot(v4_urllc_x, v4_urllc_y, color='red', linewidth=3.5, zorder=5, 
-            label=f'Proposed URLLC (N={len(v4_urllc):,})')
+    ax.plot(v4_urllc_x, v4_urllc_y, color='orange', linewidth=3.5, zorder=5, 
+            label=f'Proposed [URLLC]')
 
 # 5. Add the Hackathon constraint line
-ax.axvline(x=80, color='green', linestyle='--', linewidth=2.5, label='eMBB SLA Target (> 80 Mbps)', zorder=1)
+ax.axvline(x=80, color='green', linestyle='--', linewidth=2.5, zorder=1)
+ax.text(11, 0.75, 'eMBB SLA Target (80 Mbps) →', color='green', fontsize=14, fontweight='bold', rotation=0, va='center')
+
+
 
 # Determine graph bounds dynamically
 max_x_embb = max(max(v4_embb_x) if len(v4_embb_x) else 150, max(simple_embb_x) if len(simple_embb_x) else 150)
-ax.axvspan(80, max_x_embb * 1.05, color='green', alpha=0.05, label='eMBB SLA Met Zone')
+# ax.axvspan(80, max_x_embb * 1.05, color='green', alpha=0.05, label='eMBB SLA Met Zone')
 
 # 6. Formatting
-ax.set_title('Aggregated Internal MAC Throughput CDF: Baseline vs Proposed', fontsize=16, fontweight='bold')
-ax.set_xlabel('Calculated Throughput (Mbps)', fontsize=13)
-ax.set_ylabel('Cumulative Probability', fontsize=13)
+ax.set_title('Throughput CDF: Baseline vs Proposed', fontsize=16, fontweight='bold')
+ax.set_xlabel('Throughput (Mbps)', fontsize=14)
+ax.set_ylabel('Cumulative Probability', fontsize=14)
 
 ax.set_xlim(left=0, right=max_x_embb * 1.05)
 ax.set_ylim(0, 1.05)
 ax.grid(True, which='both', linestyle=':', alpha=0.7)
 
+ax.tick_params(axis='both', which='major', labelsize=14)
+
+
 # Move Legend to the bottom right for throughput plots
-ax.legend(loc='lower right', fontsize=11, framealpha=0.9)
+ax.legend(loc='lower right', bbox_to_anchor=(1.01, 0.0), fontsize=14, framealpha=0.9)
 
 # 7. Save and Finish
 plt.tight_layout()
