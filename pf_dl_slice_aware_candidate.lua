@@ -7,22 +7,9 @@
 --   * rho_i uses EMA decay (alpha=0.05) across slots for smooth tracking.
 --   * OLLA MCS ceiling tracking to prevent sawtooth oscillation:
 --     When BLER exceeds 2× target, records olla_frac as mcs_ceiling.
---     Future ramp-ups capped at (ceiling - margin). Ceiling relaxes
+--     Future ramp-ups capped at (ceiling - margin). Ceiling relaxes slowly
 --     when BLER is good, allowing cautious re-exploration.
 --     Acceleration factor capped at 1.5x (was 3x).
--- v4.1 tuning (based on Run 2 results):
---   * Faster ceiling relaxation: 0.2→0.5 per period (was ~300 frames stuck)
---   * Max down-step capped at 3 MCS per event (prevents cascade crash)
---   * Minimum ceiling = CQI_MCS - 4 (CQI=11 → ceiling never below 16)
---   * URLLC RB budget reduced 30%→15% (latency 25ms << 50ms target)
--- v4.2 tuning (based on Run 3 — CQI=11 eMBB stuck at MCS 8):
---   * eMBB CQI floor offset 12→6 (floor = CQI_MCS-6, so CQI=11→floor=14)
---   * BLER dead-zone: no down-step when BLER < 1.3× target (prevents cascade)
---   * eMBB OLLA_DOWN 1.0→0.5 (less aggressive per-step)
--- v4.3 tuning (based on Run 4 — CQI=10-11, floor=cap trap):
---   * CEILING_MARGIN 2→1, CEILING_MIN_OFFSET 4→2 (effective_cap > floor by 3 MCS)
---   * Cumulative drop cap: max 6 MCS total drop per BLER event (prevents cascade
---     from MCS 24 all the way to floor). Tracked via per-UE drop_start state.
 -- Retained from v3: freq-selective URLLC, budget cap, deadline logging, per-class OLLA.
 -- Every slot: retx → URLLC new data (best-channel fit) → eMBB new data (compensated PF, largest block).
 -- Traffic class determined by fiveQI (3GPP TS 23.501 Table 5.7.4-1).
@@ -81,7 +68,7 @@ local MIN_MCS      = 0
 -- Per-class OLLA parameters
 local EMBB_BLER_TARGET  = 0.10
 local EMBB_OLLA_UP      = 0.50
-local EMBB_OLLA_DOWN    = 0.50
+local EMBB_OLLA_DOWN    = 1.00
 
 local URLLC_BLER_TARGET = 0.01
 local URLLC_OLLA_UP     = 0.50
@@ -101,7 +88,7 @@ local CQI_TO_APPROX_MCS = {
     [5] = 8, [6] = 10, [7] = 12, [8] = 14, [9] = 16,
     [10] = 18, [11] = 20, [12] = 22, [13] = 24, [14] = 26, [15] = 27
 }
-local EMBB_CQI_FLOOR_OFFSET  = 6     -- eMBB: floor = CQI_MCS - 6 (CQI=11→floor=14, CQI=15→floor=21)
+local EMBB_CQI_FLOOR_OFFSET  = 12    -- eMBB: floor = CQI_MCS - 12
 local URLLC_CQI_FLOOR_OFFSET = 6     -- URLLC: tighter floor
 
 local function frames_elapsed(now, last)
@@ -116,12 +103,8 @@ end
 -- re-exploration of higher MCS values.
 ---------------------------------------------------------------------------
 local CEILING_BLER_MULT = 2.0   -- trigger ceiling when BLER > 2× target
-local CEILING_MARGIN    = 1     -- stay this many MCS below the last failure (was 2)
-local CEILING_RELAX     = 0.5   -- relax ceiling per OLLA period when BLER good
-local CEILING_MIN_OFFSET = 2    -- ceiling never below CQI_MCS - this (was 4)
-local MAX_DOWN_STEP     = 3.0   -- max MCS drop per single OLLA event
-local MAX_CUMULATIVE_DROP = 6.0 -- max total MCS drop per BLER event (prevents cascade to floor)
-local BLER_DEADZONE     = 1.3   -- no down-step when BLER < DEADZONE × target
+local CEILING_MARGIN    = 2     -- stay this many MCS below the last failure
+local CEILING_RELAX     = 0.2   -- relax ceiling by this much per OLLA period when BLER is good
 
 local function olla_mcs(rnti, seed_mcs, bler, mcs_table, frame, urllc, cqi)
     local max_mcs = 27
@@ -130,8 +113,7 @@ local function olla_mcs(rnti, seed_mcs, bler, mcs_table, frame, urllc, cqi)
     if not s then
         local default_mcs = urllc and URLLC_INIT_MCS or EMBB_INIT_MCS
         local init = seed_mcs > 0 and seed_mcs or default_mcs
-        s = { frac = init + 0.0, last_frame = frame, ceiling = max_mcs + 0.0,
-              dropping = false, drop_start = init + 0.0 }
+        s = { frac = init + 0.0, last_frame = frame, ceiling = max_mcs + 0.0 }
         olla[rnti] = s
     end
 
@@ -169,43 +151,26 @@ local function olla_mcs(rnti, seed_mcs, bler, mcs_table, frame, urllc, cqi)
             end
 
             s.frac = s.frac + step_up * accel
-            s.dropping = false  -- reset cumulative drop tracker
 
             -- Also relax the ceiling upward when BLER is good
             if s.ceiling < max_mcs then
                 s.ceiling = math.min(max_mcs, s.ceiling + CEILING_RELAX)
             end
         else
-            -- Proportional down-step with dead-zone to prevent cascade
+            -- Proportional down-step: mild BLER excess = mild penalty
             local excess_ratio = bler / math.max(bler_target, 0.001)
+            local down_scale = math.min(excess_ratio - 1.0, 2.0)
+            down_scale = math.max(0.5, down_scale)
+            s.frac = s.frac - step_down * down_scale
 
-            if excess_ratio >= BLER_DEADZONE then
-                -- Track cumulative drop from the start of this BLER event
-                if not s.dropping then
-                    s.dropping = true
-                    s.drop_start = s.frac
-                end
-
-                -- Only step down when BLER meaningfully exceeds target
-                local down_scale = math.min(excess_ratio - 1.0, 2.0)
-                down_scale = math.max(0.5, down_scale)
-                local drop = math.min(step_down * down_scale, MAX_DOWN_STEP)
-
-                -- Enforce cumulative drop cap: don't crash more than MAX_CUMULATIVE_DROP
-                local min_from_drop = s.drop_start - MAX_CUMULATIVE_DROP
-                local new_frac = math.max(s.frac - drop, min_from_drop)
-                s.frac = new_frac
-
-                -- If BLER is way above target, record a ceiling
-                if excess_ratio >= CEILING_BLER_MULT then
-                    local pre_drop = new_frac + drop  -- pre-reduction value
-                    -- Enforce minimum ceiling based on CQI
-                    local min_ceil = math.max(MIN_MCS, cqi_mcs - CEILING_MIN_OFFSET)
-                    local new_ceil = math.max(pre_drop, min_ceil)
-                    s.ceiling = math.min(s.ceiling, new_ceil)
-                end
+            -- If BLER is way above target, record a ceiling
+            if excess_ratio >= CEILING_BLER_MULT then
+                -- Set ceiling to current frac (which is already being reduced)
+                -- Use the higher of current frac and new ceiling to avoid
+                -- ratcheting down too aggressively from a single bad period
+                local new_ceil = s.frac + step_down * down_scale  -- pre-reduction value
+                s.ceiling = math.min(s.ceiling, new_ceil)
             end
-            -- else: BLER is in dead-zone (target < bler < 1.3×target), hold steady
         end
         s.last_frame = frame
     end
@@ -371,7 +336,7 @@ end
 ---------------------------------------------------------------------------
 -- URLLC budget cap: max fraction of free RBs URLLC can consume per slot
 ---------------------------------------------------------------------------
-local URLLC_RB_BUDGET_FRAC = 0.15  -- reduced from 0.30: URLLC latency 25ms << 50ms target
+local URLLC_RB_BUDGET_FRAC = 0.30
 
 ---------------------------------------------------------------------------
 -- URLLC deadline threshold for violation logging (microseconds)

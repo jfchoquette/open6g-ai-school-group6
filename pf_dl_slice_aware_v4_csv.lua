@@ -390,9 +390,35 @@ local RHO_EMA_ALPHA = 0.05        -- EMA smoothing: higher = faster tracking
 local RHO_FLOOR     = 0.001       -- clamp (1 - rho) away from zero
 
 ---------------------------------------------------------------------------
--- Debug logging (periodic)
+-- CSV logging (periodic)
 ---------------------------------------------------------------------------
 local debug_counter = 0
+local csv_file = nil
+
+local function open_csv()
+    if csv_file then return end
+    local dir = "/mnt/shared/open6g-ai-school-group6/test-runs"
+    os.execute("mkdir -p " .. dir)
+    -- Find next available run number
+    local run = 1
+    while true do
+        local path = string.format("%s/v4_run%d.csv", dir, run)
+        local f = io.open(path, "r")
+        if f then
+            f:close()
+            run = run + 1
+        else
+            break
+        end
+    end
+    local path = string.format("%s/v4_run%d.csv", dir, run)
+    csv_file = io.open(path, "w")
+    if csv_file then
+        csv_file:write("uid,rnti,frame,slot,class,fiveQI,pending_bytes,throughput,mcs,olla_frac,ceiling,bler,cqi,hol_delay_us,rho,ue_type\n")
+        csv_file:flush()
+        print(string.format("[CSV] Logging to %s", path))
+    end
+end
 
 ---------------------------------------------------------------------------
 -- Main entry point called from C every DL slot
@@ -402,19 +428,29 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
     local mask = rb_mask_string
 
     debug_counter = debug_counter + 1
-    if debug_counter % 100 == 0 then
+    if debug_counter % 80 == 0 then
+        if not csv_file then open_csv() end
         for i = 0, n_ues - 1 do
             local m = metrics[i]
             local s = olla[m.rnti]
-            local frac_str = s and string.format("%.2f", s.frac) or "N/A"
-            local ceil_str = s and string.format("%.1f", s.ceiling) or "N/A"
+            local frac_val = s and s.frac or 0
+            local ceil_val = s and s.ceiling or 27
             local class = is_urllc(m.fiveQI) and "URLLC" or "eMBB"
             local rho = puncture_rho[m.rnti] or 0.0
+            if csv_file then
+                csv_file:write(string.format(
+                    "%d,%04x,%d,%d,%s,%d,%d,%.0f,%d,%.2f,%.1f,%.3f,%d,%d,%.3f,%d\n",
+                    m.uid, m.rnti, m.frame, m.slot, class, tonumber(m.fiveQI),
+                    m.pending_bytes, m.throughput,
+                    m.previous_mcs, frac_val, ceil_val, m.bler, m.cqi,
+                    tonumber(m.hol_delay_us), rho, m.ue_type))
+                csv_file:flush()
+            end
             print(string.format(
-                "[DL %d.%d] UE %04x [%s 5QI=%d]: pending=%d thr=%.0f mcs=%d olla_frac=%s ceil=%s bler=%.3f cqi=%d hol=%d us rho=%.3f type=%d",
+                "[DL %d.%d] UE %04x [%s 5QI=%d]: pending=%d thr=%.0f mcs=%d olla_frac=%.2f ceil=%.1f bler=%.3f cqi=%d hol=%d us rho=%.3f type=%d",
                 m.frame, m.slot, m.rnti, class, tonumber(m.fiveQI),
                 m.pending_bytes, m.throughput,
-                m.previous_mcs, frac_str, ceil_str, m.bler, m.cqi,
+                m.previous_mcs, frac_val, ceil_val, m.bler, m.cqi,
                 tonumber(m.hol_delay_us), rho, m.ue_type))
         end
     end
