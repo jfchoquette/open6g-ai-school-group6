@@ -215,7 +215,7 @@ async def main(args):
 
         await wait_for_other_ue_pdu_lock(mock=args.mock)
 
-        await run_tests(control, imei)
+        await run_tests(control, imei, args)
 
         await cleanup(control, imei)
 
@@ -356,11 +356,11 @@ def create_results_dir(scheduler_name):
     """
     counter = 1
     base_name = scheduler_name
-    dir_name = f"{base_name}-{counter}"
+    dir_name = f"{WRITABLE_DIRECTORY}/{base_name}-{counter}"
 
     while os.path.exists(dir_name):
         counter += 1
-        dir_name = f"{base_name}-{counter}"
+        dir_name = f"{WRITABLE_DIRECTORY}/{base_name}-{counter}"
 
     try:
         os.makedirs(dir_name)
@@ -375,11 +375,11 @@ def find_results_dir(scheduler_name) -> str:
     """
     counter = 1
     base_name = scheduler_name
-    dir_name = f"{base_name}-{counter}"
+    dir_name = f"{WRITABLE_DIRECTORY}/{base_name}-{counter}"
 
     while os.path.exists(dir_name):
         counter += 1
-        dir_name = f"{base_name}-{counter}"
+        dir_name = f"{WRITABLE_DIRECTORY}/{base_name}-{counter}"
 
     counter -= 1
     return dir_name
