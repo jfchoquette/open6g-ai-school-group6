@@ -300,7 +300,7 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
             local hol = tonumber(m.hol_delay_us) or 0
 
             if class == "eMBB" then
-                local deficit = eMBB_TARGET_THR_BPS / math.max(thr, 1.0)
+                local deficit = EMBB_TARGET_THR_BPS / math.max(thr, 1.0)
                 if deficit < 1.0 then
                     deficit = 1.0
                 end
