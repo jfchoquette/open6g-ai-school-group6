@@ -288,8 +288,10 @@ async def run_tests_for_urlcc(control, imei, args):
     command_ok, command_output = await control.execute_command(
         imei,
         "/home/sierra/iperf_and_ping.sh",
-        timeout=60.0
+        timeout=30.0
     )
+
+    print(f"{command_output}")
 
     print(f"URLCC: Tests have run. Fetching results ({command_ok})")
 
