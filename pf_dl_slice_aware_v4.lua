@@ -5,6 +5,16 @@
 --     Modified PF coefficient: coef = r_i / (T_i * (1 - rho_i))
 --     so eMBB UEs that lose the most RBs to URLLC get priority boost.
 --   * rho_i uses EMA decay (alpha=0.05) across slots for smooth tracking.
+--   * OLLA MCS ceiling tracking to prevent sawtooth oscillation:
+--     When BLER exceeds 2× target, records olla_frac as mcs_ceiling.
+--     Future ramp-ups capped at (ceiling - margin). Ceiling relaxes
+--     when BLER is good, allowing cautious re-exploration.
+--     Acceleration factor capped at 1.5x (was 3x).
+-- v4.1 tuning (based on Run 2 results):
+--   * Faster ceiling relaxation: 0.2→0.5 per period (was ~300 frames stuck)
+--   * Max down-step capped at 4 MCS per event (prevents cascade crash)
+--   * Minimum ceiling = CQI_MCS - 6 (CQI=15 → ceiling never below 21)
+--   * URLLC RB budget reduced 30%→15% (latency 25ms << 50ms target)
 -- Retained from v3: freq-selective URLLC, budget cap, deadline logging, per-class OLLA.
 -- Every slot: retx → URLLC new data (best-channel fit) → eMBB new data (compensated PF, largest block).
 -- Traffic class determined by fiveQI (3GPP TS 23.501 Table 5.7.4-1).
@@ -72,18 +82,45 @@ local URLLC_OLLA_DOWN   = 0.50
 local EMBB_INIT_MCS  = 14
 local URLLC_INIT_MCS = 9
 
+---------------------------------------------------------------------------
+-- CQI-to-MCS floor: prevents OLLA death spiral when channel is good.
+-- Approximate CQI-to-MCS mapping (Table 1, 64QAM) used as reference.
+-- Floor = CQI_MCS - offset, so OLLA never drops absurdly below what
+-- the channel can clearly support.
+---------------------------------------------------------------------------
+local CQI_TO_APPROX_MCS = {
+    [0] = 0, [1] = 0, [2] = 2, [3] = 4, [4] = 6,
+    [5] = 8, [6] = 10, [7] = 12, [8] = 14, [9] = 16,
+    [10] = 18, [11] = 20, [12] = 22, [13] = 24, [14] = 26, [15] = 27
+}
+local EMBB_CQI_FLOOR_OFFSET  = 12    -- eMBB: floor = CQI_MCS - 12
+local URLLC_CQI_FLOOR_OFFSET = 6     -- URLLC: tighter floor
+
 local function frames_elapsed(now, last)
     return (now - last) % MAX_FRAME
 end
 
-local function olla_mcs(rnti, seed_mcs, bler, mcs_table, frame, urllc)
+---------------------------------------------------------------------------
+-- MCS ceiling tracking: prevents repeated overshoot to unsustainable MCS.
+-- When BLER exceeds CEILING_BLER_MULT × target, record current olla_frac
+-- as a ceiling.  Ramp-ups are then capped at (ceiling - CEILING_MARGIN).
+-- The ceiling relaxes upward slowly when BLER is good, allowing cautious
+-- re-exploration of higher MCS values.
+---------------------------------------------------------------------------
+local CEILING_BLER_MULT = 2.0   -- trigger ceiling when BLER > 2× target
+local CEILING_MARGIN    = 2     -- stay this many MCS below the last failure
+local CEILING_RELAX     = 0.5   -- relax ceiling per OLLA period when BLER good (was 0.2)
+local CEILING_MIN_OFFSET = 6    -- ceiling never below CQI_MCS - this (prevents getting stuck)
+local MAX_DOWN_STEP     = 4.0   -- max MCS drop per OLLA event (prevents cascade crash)
+
+local function olla_mcs(rnti, seed_mcs, bler, mcs_table, frame, urllc, cqi)
     local max_mcs = 27
     local s = olla[rnti]
 
     if not s then
         local default_mcs = urllc and URLLC_INIT_MCS or EMBB_INIT_MCS
         local init = seed_mcs > 0 and seed_mcs or default_mcs
-        s = { frac = init + 0.0, last_frame = frame }
+        s = { frac = init + 0.0, last_frame = frame, ceiling = max_mcs + 0.0 }
         olla[rnti] = s
     end
 
@@ -92,18 +129,62 @@ local function olla_mcs(rnti, seed_mcs, bler, mcs_table, frame, urllc)
     local step_up     = urllc and URLLC_OLLA_UP     or EMBB_OLLA_UP
     local step_down   = urllc and URLLC_OLLA_DOWN   or EMBB_OLLA_DOWN
 
+    -- CQI-derived MCS floor: prevents death spiral when channel is good
+    local cqi_val = (cqi and cqi >= 0 and cqi <= 15) and cqi or 0
+    local cqi_mcs = CQI_TO_APPROX_MCS[cqi_val] or 0
+    local floor_offset = urllc and URLLC_CQI_FLOOR_OFFSET or EMBB_CQI_FLOOR_OFFSET
+    local cqi_floor = math.max(MIN_MCS, cqi_mcs - floor_offset)
+
+    -- Effective ceiling: never ramp above (ceiling - margin)
+    local effective_cap = math.min(max_mcs, s.ceiling - CEILING_MARGIN)
+    effective_cap = math.max(cqi_floor, effective_cap)  -- ceiling can't be below floor
+
     -- One adjustment per OLLA_PERIOD frames
     if frames_elapsed(frame, s.last_frame) >= OLLA_PERIOD then
         if bler < bler_target then
-            s.frac = s.frac + step_up
+            -- MCS is below ceiling: ramp up with moderate acceleration
+            local deficit = cqi_mcs - s.frac
+            local accel = 1.0
+            if deficit > 10 then
+                accel = 1.5   -- was 3.0 — reduced to prevent overshoot
+            elseif deficit > 5 then
+                accel = 1.25   -- was 2.0
+            end
+
+            -- Slow down as we approach the ceiling
+            local headroom = effective_cap - s.frac
+            if headroom < 3.0 and headroom > 0 then
+                accel = accel * (headroom / 3.0)  -- linear taper
+            end
+
+            s.frac = s.frac + step_up * accel
+
+            -- Also relax the ceiling upward when BLER is good
+            if s.ceiling < max_mcs then
+                s.ceiling = math.min(max_mcs, s.ceiling + CEILING_RELAX)
+            end
         else
-            s.frac = s.frac - step_down
+            -- Proportional down-step: mild BLER excess = mild penalty
+            local excess_ratio = bler / math.max(bler_target, 0.001)
+            local down_scale = math.min(excess_ratio - 1.0, 2.0)
+            down_scale = math.max(0.5, down_scale)
+            local drop = math.min(step_down * down_scale, MAX_DOWN_STEP)
+            s.frac = s.frac - drop
+
+            -- If BLER is way above target, record a ceiling
+            if excess_ratio >= CEILING_BLER_MULT then
+                local new_ceil = s.frac + drop  -- pre-reduction value
+                -- Enforce minimum ceiling based on CQI
+                local min_ceil = math.max(MIN_MCS, cqi_mcs - CEILING_MIN_OFFSET)
+                new_ceil = math.max(new_ceil, min_ceil)
+                s.ceiling = math.min(s.ceiling, new_ceil)
+            end
         end
         s.last_frame = frame
     end
 
-    -- Clamp to valid range
-    s.frac = math.max(MIN_MCS, math.min(s.frac, max_mcs))
+    -- Clamp: never below CQI floor, never above effective ceiling
+    s.frac = math.max(cqi_floor, math.min(s.frac, effective_cap))
 
     return math.floor(s.frac)
 end
@@ -263,7 +344,7 @@ end
 ---------------------------------------------------------------------------
 -- URLLC budget cap: max fraction of free RBs URLLC can consume per slot
 ---------------------------------------------------------------------------
-local URLLC_RB_BUDGET_FRAC = 0.30
+local URLLC_RB_BUDGET_FRAC = 0.15  -- reduced from 0.30: URLLC latency 25ms << 50ms target
 
 ---------------------------------------------------------------------------
 -- URLLC deadline threshold for violation logging (microseconds)
@@ -299,13 +380,14 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
             local m = metrics[i]
             local s = olla[m.rnti]
             local frac_str = s and string.format("%.2f", s.frac) or "N/A"
+            local ceil_str = s and string.format("%.1f", s.ceiling) or "N/A"
             local class = is_urllc(m.fiveQI) and "URLLC" or "eMBB"
             local rho = puncture_rho[m.rnti] or 0.0
             print(string.format(
-                "[DL %d.%d] UE %04x [%s 5QI=%d]: pending=%d thr=%.0f mcs=%d olla_frac=%s bler=%.3f cqi=%d hol=%d us rho=%.3f type=%d",
+                "[DL %d.%d] UE %04x [%s 5QI=%d]: pending=%d thr=%.0f mcs=%d olla_frac=%s ceil=%s bler=%.3f cqi=%d hol=%d us rho=%.3f type=%d",
                 m.frame, m.slot, m.rnti, class, tonumber(m.fiveQI),
                 m.pending_bytes, m.throughput,
-                m.previous_mcs, frac_str, m.bler, m.cqi,
+                m.previous_mcs, frac_str, ceil_str, m.bler, m.cqi,
                 tonumber(m.hol_delay_us), rho, m.ue_type))
         end
     end
@@ -352,7 +434,7 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
         -- Frequency-selective: pick the `needed` contiguous RBs with best channel
         local s = find_best_channel_rbs(mask, needed, m.bwp_start, m.bwp_size, m.channel_mag_per_rb)
         if s >= 0 then
-            local mcs = olla_mcs(m.rnti, m.previous_mcs, m.bler, m.mcs_table, m.frame, true)
+            local mcs = olla_mcs(m.rnti, m.previous_mcs, m.bler, m.mcs_table, m.frame, true, m.cqi)
             m.allocated_rb = needed
             m.allocated_mcs = mcs
             m.allocated_rb_start = s
@@ -404,7 +486,7 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
         local best_start, best_len = find_largest_block(mask, m.bwp_start, m.bwp_size)
 
         if best_len >= min_rbs then
-            local mcs = olla_mcs(m.rnti, m.previous_mcs, m.bler, m.mcs_table, m.frame, false)
+            local mcs = olla_mcs(m.rnti, m.previous_mcs, m.bler, m.mcs_table, m.frame, false, m.cqi)
             m.allocated_rb = best_len
             m.allocated_mcs = mcs
             m.allocated_rb_start = best_start
