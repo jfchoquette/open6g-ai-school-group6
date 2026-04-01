@@ -252,7 +252,7 @@ async def run_tests_for_urlcc(control, imei, args):
         time_values = re.findall(r'time=([0-9.]+)', ping_output)
 
         results_dir = find_results_dir(args.scheduler_file_name)
-        with open(f'{WRITABLE_DIRECTORY}/{results_dir}/urlcc_ping_results.csv', 'w') as f:
+        with open(f'{results_dir}/urlcc_ping_results.csv', 'w') as f:
             f.write("time(ms)\n")
             f.write('\n'.join(time_values))
 
@@ -270,7 +270,7 @@ async def run_tests_for_embb(control, imei, args):
     if iperf_output:
         print(iperf_output)
         results_dir = find_results_dir(args.scheduler_file_name)
-        with open(f'{WRITABLE_DIRECTORY}/{results_dir}/embb_iperf_results.csv', 'w') as f:
+        with open(f'{results_dir}/embb_iperf_results.csv', 'w') as f:
             f.write("Interval_Start(sec),Interval_End(sec),Transfer,Transfer_Unit,Bandwidth(Mbits/sec),Jitter(ms),Lost_Datagrams,Total_Datagrams,Packet_Loss(%)\n")
 
             for line in iperf_output.splitlines():
