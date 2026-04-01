@@ -256,7 +256,7 @@ async def run_tests_for_embb(control, imei):
     print(f"iperf result: {'OK' if iperf_ok else 'FAILED'}")
     if iperf_output:
         print(iperf_output)
-        with open('results/embb_output.csv', 'w') as f:
+        with open('iperf_output.csv', 'w') as f:
             f.write("Interval_Start(sec),Interval_End(sec),Transfer,Transfer_Unit,Bandwidth(Mbits/sec),Jitter(ms),Lost_Datagrams,Total_Datagrams,Packet_Loss(%)\n")
 
             for line in iperf_output.splitlines():
