@@ -154,7 +154,7 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
     local EMBB_WEIGHT  = 4.0
 
     -- Protected minimum eMBB share when both classes are active
-    local EMBB_MIN_SHARE = 0.40
+    local EMBB_MIN_SHARE = 0.1
 
     -----------------------------------------------------------------------
     -- Local helpers
@@ -436,7 +436,7 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
         -------------------------------------------------------------------
         -- Compute share shift from a balanced baseline
         -------------------------------------------------------------------
-        local dynamic_urllc_share = 0.25
+        local dynamic_urllc_share = 0.9
 
         if urllc_below_target > 0 then
             local urllc_pressure =
