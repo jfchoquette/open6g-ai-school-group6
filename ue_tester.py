@@ -239,7 +239,7 @@ async def run_tests_for_urlcc(control, imei):
         if ping_output:
             print(ping_output)
         time_values = re.findall(r'time=([0-9.]+)', ping_output)
-        with open('ue_ping_output.csv', 'w') as f:
+        with open('results/urlcc_output.csv', 'w') as f:
             f.write("time(ms)\n")
             f.write('\n'.join(time_values))
 
@@ -256,21 +256,34 @@ async def run_tests_for_embb(control, imei):
     print(f"iperf result: {'OK' if iperf_ok else 'FAILED'}")
     if iperf_output:
         print(iperf_output)
-        with open('iperf_output.csv', 'w') as f:
-            f.write("Interval_Start(sec),Interval_End(sec),Transfer(MBytes),Bandwidth(Mbits/sec),Jitter(ms),Lost_Datagrams,Total_Datagrams,Packet_Loss(%)\n")
-            for line in iperf_output.split('\n'):
-                match = re.search(r'\[\*1\]\s+([0-9.]+)-([0-9.]+)\s+sec\s+([0-9.]+)\s+MBytes\s+([0-9.]+)\s+Mbits/sec\s+([0-9.]+)\s+ms\s+([0-9]+)/([0-9]+)\s+\(([0-9.]+)%\)', line)
+        with open('results/embb_output.csv', 'w') as f:
+            f.write("Interval_Start(sec),Interval_End(sec),Transfer,Transfer_Unit,Bandwidth(Mbits/sec),Jitter(ms),Lost_Datagrams,Total_Datagrams,Packet_Loss(%)\n")
+
+            for line in iperf_output.splitlines():
+                line = line.replace('\xa0', ' ')  # remove non-breaking spaces
+
+                match = re.search(
+                    r'\[\s*\*?1\]\s+'
+                    r'([0-9.]+)-([0-9.]+)\s+sec\s+'
+                    r'([0-9.]+)\s+(MBytes|KBytes)\s+'
+                    r'([0-9.]+)\s+Mbits/sec\s+'
+                    r'([0-9.]+)\s+ms\s+'
+                    r'([0-9]+)/([0-9]+)\s+\(([0-9.]+)%\)',
+                    line
+                )
+
                 if match:
                     interval_start = match.group(1)
                     interval_end = match.group(2)
                     transfer = match.group(3)
-                    bandwidth = match.group(4)
-                    jitter = match.group(5)
-                    lost = match.group(6)
-                    total = match.group(7)
-                    loss_pct = match.group(8)
-                    
-                    f.write(f"{interval_start},{interval_end},{transfer},{bandwidth},{jitter},{lost},{total},{loss_pct}\n")
+                    transfer_unit = match.group(4)
+                    bandwidth = match.group(5)
+                    jitter = match.group(6)
+                    lost = match.group(7)
+                    total = match.group(8)
+                    loss_pct = match.group(9)
+
+                    f.write(f"{interval_start},{interval_end},{transfer},{transfer_unit},{bandwidth},{jitter},{lost},{total},{loss_pct}\n")
 
 async def run_tests(control, imei):
     if CQI.get() == CQI.eMBB:
