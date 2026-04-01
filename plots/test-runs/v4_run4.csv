@@ -1,0 +1,5 @@
+uid,rnti,frame,slot,class,fiveQI,pending_bytes,throughput,mcs,olla_frac,ceiling,bler,cqi,hol_delay_us,rho,ue_type
+1,999f,146,1,eMBB,0,0,0,13,13.75,27.0,0.150,0,0,0.000,0
+0,e9da,930,13,eMBB,9,3,0,20,20.49,23.5,0.014,13,0,0.000,0
+5,73f7,252,1,eMBB,0,28,1966,21,21.63,27.0,0.000,15,0,0.000,0
+5,73f7,568,3,URLLC,69,3,0,18,18.00,20.0,0.051,13,0,0.000,0
