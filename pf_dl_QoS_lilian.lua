@@ -153,8 +153,10 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
     -----------------------------------------------------------------------
     -- Local helpers
     -----------------------------------------------------------------------
+    local URLLC_UID = 0
+
     local function get_service_class(m)
-        if m.pending_bytes > 5000 or m.throughput > 1e6 then
+        if m.uid == URLLC_UID then
             return "URLLC"
         else
             return "eMBB"
