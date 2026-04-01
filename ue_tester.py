@@ -6,7 +6,7 @@ If the UE is detected to be configured for eMBB -> Run ping tests only
 If the UE is detected to be configured for URLCC -> Run
 
 Usage:
-  python school_sierra_controller.py                # PDU up for 30s, no tests
+  python school_sierra_controller.py
   python school_sierra_controller.py --reboot       # reboot sierra first
 """
 import argparse
@@ -209,7 +209,7 @@ async def main(args):
     try:
         await control.connect(imei)
 
-        await do_pre_run_cleanup(control, imei, reboot=args.reboot, mock=args.mock)
+        await do_pre_run_cleanup(control, imei, args)
 
         await create_pdu_session(control, imei)
 
@@ -290,13 +290,15 @@ async def run_tests(control, imei):
     if CQI.get() == CQI.URLLC:
         await run_tests_for_urlcc(control, imei)
 
-async def do_pre_run_cleanup(control, imei, reboot=False, mock=False):
+async def do_pre_run_cleanup(control, imei, args):
 
-    if not mock:
+    if not args.mock:
         if os.path.exists(CQI.get().pdu_lock_file_path):
             os.remove(CQI.get().pdu_lock_file_path)
 
-    if reboot:
+        create_results_dir(args.scheduler_file_name)
+
+    if args.reboot:
         print("\n[REBOOT] Rebooting Sierra...")
         await control.reboot_sierra(imei)
         print("Sierra rebooted.")
@@ -329,6 +331,39 @@ async def create_pdu_session(control, imei):
     print("\n*** PDU session active ***")
     with open(CQI.get().pdu_lock_file_path, 'w') as lock:
         lock.write(f"Exists: {TARGET_IMSI}\n")
+
+# This isn't going to work because we need to have the two runners agree on the same ID
+# I guess I could just have it grab the highest number
+def create_results_dir(scheduler_name):
+    """
+    Directory in persistent storage to save results.
+    We will arbitrarily have URLCC runner create this, for simplicity.
+    """
+    counter = 1
+    base_name = scheduler_name
+    dir_name = f"{base_name}-{counter}"
+
+    while os.path.exists(dir_name):
+        counter += 1
+        dir_name = f"{base_name}-{counter}"
+
+    try:
+        os.makedirs(dir_name)
+        print(f"Successfully created: {dir_name}")
+        return dir_name
+    except OSError as e:
+        print(f"Error creating directory {dir_name}: {e}")
+        return None
+
+def save_results():
+    """
+    Saves results from test run.
+    """
+    
+    # Create test run directory (<scheduler_file_name>-<nextid>/)
+    # Write CSV
+    
+    pass
 
 def run():
     args = parse_args()
