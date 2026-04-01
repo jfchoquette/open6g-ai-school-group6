@@ -157,9 +157,9 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
     local function get_service_class(fiveQI)
         local qi = tonumber(fiveQI)
         if q1 == 69 then
-            return "URLLC"
+            return "eMBB" -- LF: need to change the code later
         else
-            return "eMBB"
+            return "URLLC"
         end
     end
     
