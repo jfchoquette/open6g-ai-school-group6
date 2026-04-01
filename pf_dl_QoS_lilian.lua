@@ -147,9 +147,8 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
     -----------------------------------------------------------------------
     -- QoS configuration
     -----------------------------------------------------------------------
-    local EMBB_LATENCY_WARNING_US = 30000    -- start boosting eMBB priority
-    local EMBB_LATENCY_TARGET_US  = 50000    -- 50 ms target
-    local URLLC_TARGET_THR_BPS    = 80e6     -- 80 Mbps, throughput is in bits/s
+    local EMBB_LATENCY_TARGET_US = 50000    -- 50 ms
+    local URLLC_TARGET_THR_BPS   = 80e6     -- 80 Mbps, throughput is in bits/s
 
     -----------------------------------------------------------------------
     -- Local helpers
@@ -177,8 +176,6 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
     end
 
     local function allocate_exact_or_less(m, mask_str, max_budget)
-        -- Try exact requested size first.
-        -- If not possible, try smaller contiguous blocks down to min_rbs.
         if max_budget < min_rbs then
             return mask_str, 0
         end
@@ -203,7 +200,6 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
     end
 
     local function allocate_largest_possible(m, mask_str, max_budget)
-        -- Allocate one contiguous block, up to max_budget.
         if max_budget < min_rbs then
             return mask_str, 0
         end
@@ -255,10 +251,10 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
             local s = olla[m.rnti]
             local frac_str = s and string.format("%.2f", s.frac) or "N/A"
             print(string.format(
-                "[DL %d.%d] UE uid=%d rnti=%04x fiveQI=%d class=%s pending=%d thr=%.0f bps mcs=%d olla_frac=%s bler=%.3f hol=%d us type=%d",
+                "[DL %d.%d] UE uid=%d rnti=%04x fiveQI=%d class=%s pending=%d thr=%.0f bps req_rbs=%d alloc_rb=%d mcs=%d olla_frac=%s bler=%.3f hol=%d us type=%d",
                 m.frame, m.slot, m.uid, m.rnti, tonumber(m.fiveQI), get_service_class(m),
-                m.pending_bytes, m.throughput, m.previous_mcs, frac_str,
-                m.bler, tonumber(m.hol_delay_us), m.ue_type))
+                m.pending_bytes, m.throughput, m.required_rbs, m.allocated_rb,
+                m.previous_mcs, frac_str, m.bler, tonumber(m.hol_delay_us), m.ue_type))
         end
     end
 
@@ -279,22 +275,19 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
     end
 
     -----------------------------------------------------------------------
-    -- Phase 2: Build candidate lists
+    -- Phase 2: Build lists
     --
     -- eMBB:
-    --   low-rate latency-sensitive traffic
-    --   priority rises only when HOL delay grows
+    --   only protected if it is already violating the latency target
     --
     -- URLLC:
-    --   throughput-sensitive traffic
-    --   priority rises when throughput is below target
+    --   prioritized by throughput deficit
     -----------------------------------------------------------------------
     local urllc_ues = {}
     local embb_ues  = {}
 
     for i = 0, n_ues - 1 do
         local m = metrics[i]
-
         if m.ue_type == UE_TYPE_NEW_DATA and m.pending_bytes > 0 then
             local class = get_service_class(m)
             local thr = (m.throughput > 0) and m.throughput or 1.0
@@ -313,34 +306,16 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
                     deficit = deficit
                 }
             else
-                -- eMBB gets urgent priority only when HOL increases.
-                local priority = 0.0
-
-                if hol >= EMBB_LATENCY_TARGET_US then
-                    -- Very urgent: must be served now.
-                    priority = 1000.0 + (hol / EMBB_LATENCY_TARGET_US)
-                elseif hol >= EMBB_LATENCY_WARNING_US then
-                    -- Warning zone: boost priority before target is violated.
-                    priority = 100.0 + (hol / EMBB_LATENCY_TARGET_US)
-                else
-                    -- Not urgent yet.
-                    priority = hol / EMBB_LATENCY_TARGET_US
-                end
-
                 embb_ues[#embb_ues + 1] = {
                     idx = i,
-                    hol = hol,
-                    priority = priority
+                    hol = hol
                 }
             end
         end
     end
 
     table.sort(embb_ues, function(a, b)
-        if a.priority == b.priority then
-            return a.hol > b.hol
-        end
-        return a.priority > b.priority
+        return a.hol > b.hol
     end)
 
     table.sort(urllc_ues, function(a, b)
@@ -351,11 +326,11 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
     end)
 
     -----------------------------------------------------------------------
-    -- Phase 3: eMBB latency protection first
+    -- Phase 3: rescue eMBB only if latency target is already violated
     --
-    -- eMBB is ping / low-rate traffic.
-    -- We do NOT reserve RBs permanently.
-    -- We only allocate to eMBB early when HOL delay says it is needed.
+    -- This is intentionally aggressive for URLLC.
+    -- For ping traffic, we do not reserve RBs and we do not serve eMBB early
+    -- unless it is actually in trouble.
     -----------------------------------------------------------------------
     local free_now = count_free_rbs(mask, 0, total_rbs)
     if free_now < min_rbs then
@@ -366,18 +341,14 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
 
     for _, entry in ipairs(embb_ues) do
         local m = metrics[entry.idx]
-        local hol = entry.hol
         local remain = free_now - used_embb
         if remain < min_rbs then
             break
         end
 
-        -- Serve eMBB only if delay is becoming important.
-        if hol >= EMBB_LATENCY_WARNING_US then
+        if entry.hol >= EMBB_LATENCY_TARGET_US then
+            -- Low-rate traffic: just give enough to avoid latency explosion.
             local req = (m.required_rbs > 0) and m.required_rbs or min_rbs
-
-            -- For ping-like traffic, usually a small grant is enough.
-            -- Keep it simple: give only what is needed, bounded by remaining RBs.
             local grant_budget = math.min(req, remain)
 
             local new_mask, got = allocate_with_fallback(m, mask, grant_budget)
@@ -387,11 +358,11 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
     end
 
     -----------------------------------------------------------------------
-    -- Phase 4: URLLC allocation with fairness inside URLLC
+    -- Phase 4: give the rest to URLLC
     --
-    -- All remaining RBs go to URLLC.
-    -- If there is more than one URLLC UE, divide the URLLC budget more
-    -- fairly based on throughput deficit.
+    -- If there is one URLLC UE, it can use the whole remaining budget.
+    -- If there are multiple URLLC UEs, split the budget fairly according
+    -- to throughput deficit.
     -----------------------------------------------------------------------
     local urllc_budget = count_free_rbs(mask, 0, total_rbs)
 
@@ -413,14 +384,10 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
             local grant_budget
 
             if #urllc_ues == 1 or deficit_sum <= 0.0 then
-                -- Only one URLLC UE: it can use the whole URLLC budget.
                 grant_budget = remain
             else
-                -- Fair split among URLLC UEs according to throughput deficit.
-                -- A UE farther below target gets a larger portion.
                 grant_budget = math.floor(urllc_budget * (entry.deficit / deficit_sum))
 
-                -- Ensure the last UE can use all remaining RBs.
                 if pos == #urllc_ues then
                     grant_budget = remain
                 end
@@ -444,29 +411,12 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
     -- Phase 5: leftover RBs
     --
     -- Priority:
-    --   1) unscheduled eMBB already violating latency target
-    --   2) remaining unscheduled URLLC
-    --   3) remaining unscheduled eMBB
+    --   1) remaining unscheduled URLLC
+    --   2) remaining unscheduled eMBB
     -----------------------------------------------------------------------
     local leftover = count_free_rbs(mask, 0, total_rbs)
 
     if leftover >= min_rbs then
-        -- 1) eMBB already violating latency target
-        for _, entry in ipairs(embb_ues) do
-            local m = metrics[entry.idx]
-            if m.allocated_rb == 0 and entry.hol >= EMBB_LATENCY_TARGET_US then
-                local new_mask, got = allocate_with_fallback(m, mask, leftover)
-                mask = new_mask
-                leftover = leftover - got
-                if leftover < min_rbs then
-                    break
-                end
-            end
-        end
-    end
-
-    if leftover >= min_rbs then
-        -- 2) remaining URLLC
         for _, entry in ipairs(urllc_ues) do
             local m = metrics[entry.idx]
             if m.allocated_rb == 0 then
@@ -481,7 +431,6 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
     end
 
     if leftover >= min_rbs then
-        -- 3) remaining eMBB
         for _, entry in ipairs(embb_ues) do
             local m = metrics[entry.idx]
             if m.allocated_rb == 0 then
@@ -506,9 +455,9 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
         for i = 0, n_ues - 1 do
             local m = metrics[i]
             print(string.format(
-                "[QoS DL %d.%d] UE uid=%d rnti=%04x fiveQI=%d class=%s pending=%d thr=%.0f bps hol=%d us alloc_rb=%d alloc_mcs=%d alloc_start=%d type=%d",
+                "[QoS DL %d.%d] UE uid=%d rnti=%04x fiveQI=%d class=%s pending=%d thr=%.0f bps req_rbs=%d hol=%d us alloc_rb=%d alloc_mcs=%d alloc_start=%d type=%d",
                 m.frame, m.slot, m.uid, m.rnti, tonumber(m.fiveQI), get_service_class(m),
-                m.pending_bytes, m.throughput, tonumber(m.hol_delay_us),
+                m.pending_bytes, m.throughput, m.required_rbs, tonumber(m.hol_delay_us),
                 m.allocated_rb, m.allocated_mcs, m.allocated_rb_start, m.ue_type))
         end
     end
