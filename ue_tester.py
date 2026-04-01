@@ -244,11 +244,7 @@ async def run_tests_for_urlcc(control, imei, args):
     ping_loops = 3
     
     print("\nURLCC: Starting iperf traffic (UDP DL 10Mbps, 20s)...")
-    iperf_handle = control.execute_command(
-        imei,
-        "iperf -c 10.45.0.1 -p 8037 -u -b 10M -R -t 20 -i 1",
-        timeout=60.0
-    )
+    iperf_handle = asyncio.create_task(control.execute_command(imei, "iperf -c 10.45.0.1 -p 8037 -u -b 10M -R -t 20 -i 1", timeout=60.0))
 
     for i in range(ping_loops):
         ping_ok, ping_output = control.ping_test(imei, "10.45.0.1", timeout=30.0)
