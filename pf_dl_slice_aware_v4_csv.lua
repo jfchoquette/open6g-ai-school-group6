@@ -397,7 +397,7 @@ local csv_file = nil
 
 local function open_csv()
     if csv_file then return end
-    local dir = "./test-runs"
+    local dir = "/mnt/shared/open6g-ai-school-group6/test-runs"
     os.execute("mkdir -p " .. dir)
     -- Find next available run number
     local run = 1
