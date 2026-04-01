@@ -157,7 +157,7 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
         -- 5QI-based classification:
         -- 69 -> URLLC
         -- otherwise -> eMBB
-        if m.rnti == 0x501f then
+        if m.uid == 0 then
             return "URLLC"
         else
             return "eMBB"
