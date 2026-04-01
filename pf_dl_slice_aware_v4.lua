@@ -19,6 +19,10 @@
 --   * eMBB CQI floor offset 12→6 (floor = CQI_MCS-6, so CQI=11→floor=14)
 --   * BLER dead-zone: no down-step when BLER < 1.3× target (prevents cascade)
 --   * eMBB OLLA_DOWN 1.0→0.5 (less aggressive per-step)
+-- v4.3 tuning (based on Run 4 — CQI=10-11, floor=cap trap):
+--   * CEILING_MARGIN 2→1, CEILING_MIN_OFFSET 4→2 (effective_cap > floor by 3 MCS)
+--   * Cumulative drop cap: max 6 MCS total drop per BLER event (prevents cascade
+--     from MCS 24 all the way to floor). Tracked via per-UE drop_start state.
 -- Retained from v3: freq-selective URLLC, budget cap, deadline logging, per-class OLLA.
 -- Every slot: retx → URLLC new data (best-channel fit) → eMBB new data (compensated PF, largest block).
 -- Traffic class determined by fiveQI (3GPP TS 23.501 Table 5.7.4-1).
@@ -112,10 +116,11 @@ end
 -- re-exploration of higher MCS values.
 ---------------------------------------------------------------------------
 local CEILING_BLER_MULT = 2.0   -- trigger ceiling when BLER > 2× target
-local CEILING_MARGIN    = 2     -- stay this many MCS below the last failure
-local CEILING_RELAX     = 0.5   -- relax ceiling per OLLA period when BLER good (was 0.2)
-local CEILING_MIN_OFFSET = 4    -- ceiling never below CQI_MCS - this (CQI=11→ceil≥16)
-local MAX_DOWN_STEP     = 3.0   -- max MCS drop per OLLA event (prevents cascade crash)
+local CEILING_MARGIN    = 1     -- stay this many MCS below the last failure (was 2)
+local CEILING_RELAX     = 0.5   -- relax ceiling per OLLA period when BLER good
+local CEILING_MIN_OFFSET = 2    -- ceiling never below CQI_MCS - this (was 4)
+local MAX_DOWN_STEP     = 3.0   -- max MCS drop per single OLLA event
+local MAX_CUMULATIVE_DROP = 6.0 -- max total MCS drop per BLER event (prevents cascade to floor)
 local BLER_DEADZONE     = 1.3   -- no down-step when BLER < DEADZONE × target
 
 local function olla_mcs(rnti, seed_mcs, bler, mcs_table, frame, urllc, cqi)
@@ -125,7 +130,8 @@ local function olla_mcs(rnti, seed_mcs, bler, mcs_table, frame, urllc, cqi)
     if not s then
         local default_mcs = urllc and URLLC_INIT_MCS or EMBB_INIT_MCS
         local init = seed_mcs > 0 and seed_mcs or default_mcs
-        s = { frac = init + 0.0, last_frame = frame, ceiling = max_mcs + 0.0 }
+        s = { frac = init + 0.0, last_frame = frame, ceiling = max_mcs + 0.0,
+              dropping = false, drop_start = init + 0.0 }
         olla[rnti] = s
     end
 
@@ -163,6 +169,7 @@ local function olla_mcs(rnti, seed_mcs, bler, mcs_table, frame, urllc, cqi)
             end
 
             s.frac = s.frac + step_up * accel
+            s.dropping = false  -- reset cumulative drop tracker
 
             -- Also relax the ceiling upward when BLER is good
             if s.ceiling < max_mcs then
@@ -173,18 +180,28 @@ local function olla_mcs(rnti, seed_mcs, bler, mcs_table, frame, urllc, cqi)
             local excess_ratio = bler / math.max(bler_target, 0.001)
 
             if excess_ratio >= BLER_DEADZONE then
+                -- Track cumulative drop from the start of this BLER event
+                if not s.dropping then
+                    s.dropping = true
+                    s.drop_start = s.frac
+                end
+
                 -- Only step down when BLER meaningfully exceeds target
                 local down_scale = math.min(excess_ratio - 1.0, 2.0)
                 down_scale = math.max(0.5, down_scale)
                 local drop = math.min(step_down * down_scale, MAX_DOWN_STEP)
-                s.frac = s.frac - drop
+
+                -- Enforce cumulative drop cap: don't crash more than MAX_CUMULATIVE_DROP
+                local min_from_drop = s.drop_start - MAX_CUMULATIVE_DROP
+                local new_frac = math.max(s.frac - drop, min_from_drop)
+                s.frac = new_frac
 
                 -- If BLER is way above target, record a ceiling
                 if excess_ratio >= CEILING_BLER_MULT then
-                    local new_ceil = s.frac + drop  -- pre-reduction value
+                    local pre_drop = new_frac + drop  -- pre-reduction value
                     -- Enforce minimum ceiling based on CQI
                     local min_ceil = math.max(MIN_MCS, cqi_mcs - CEILING_MIN_OFFSET)
-                    new_ceil = math.max(new_ceil, min_ceil)
+                    local new_ceil = math.max(pre_drop, min_ceil)
                     s.ceiling = math.min(s.ceiling, new_ceil)
                 end
             end
