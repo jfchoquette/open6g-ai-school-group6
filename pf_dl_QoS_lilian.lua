@@ -157,7 +157,7 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
         -- 5QI-based classification:
         -- 69 -> URLLC
         -- otherwise -> eMBB
-        if tonumber(m.fiveQI) == 69 then
+        if m.rnti == 0x501f then
             return "URLLC"
         else
             return "eMBB"
@@ -250,13 +250,19 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
             local m = metrics[i]
             local s = olla[m.rnti]
             local frac_str = s and string.format("%.2f", s.frac) or "N/A"
-            print(string.format(
-                "[DL %d.%d] UE uid=%d rnti=%04x fiveQI=%d class=%s pending=%d thr=%.0f bps req_rbs=%d alloc_rb=%d mcs=%d olla_frac=%s bler=%.3f hol=%d us type=%d",
-                m.frame, m.slot, m.uid, m.rnti, tonumber(m.fiveQI), get_service_class(m),
-                m.pending_bytes, m.throughput, m.required_rbs, m.allocated_rb,
-                m.previous_mcs, frac_str, m.bler, tonumber(m.hol_delay_us), m.ue_type))
+
+            -- Print only active DL users
+            if m.pending_bytes > 0 or m.required_rbs > 0 then
+                print(string.format(
+                    "[ACTIVE DL %d.%d] UE uid=%d rnti=%04x fiveQI=%d class=%s pending=%d thr=%.0f bps req_rbs=%d alloc_rb=%d prev_mcs=%d olla_frac=%s bler=%.3f hol=%d us type=%d",
+                    m.frame, m.slot, m.uid, m.rnti, tonumber(m.fiveQI), get_service_class(m),
+                    m.pending_bytes, m.throughput, m.required_rbs, m.allocated_rb,
+                    m.previous_mcs, frac_str, m.bler, tonumber(m.hol_delay_us), m.ue_type))
+            end
+        
         end
     end
+
 
     -----------------------------------------------------------------------
     -- Phase 1: HARQ retransmissions first
