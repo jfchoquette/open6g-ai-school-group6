@@ -134,7 +134,7 @@ async def graceful_cleanup(control, imei, args):
     """Delete PDU session and enable airplane mode before exiting."""
     print("\n[CTRL+C] Graceful shutdown — cleaning up...")
     try:
-        await cleanup(control, imei, args.mock())
+        await cleanup(control, imei, args.mock)
     except Exception as e:
         print(f"[CTRL+C] Cleanup error: {e}")
     print("[CTRL+C] Cleanup complete.")
