@@ -9,11 +9,11 @@ echo "Starting simultaneous iperf and ping tests to $SERVER_IP"
 echo "Test duration: $DURATION seconds"
 echo "---------------------------------------------------"
 
-iperf -c $SERVER_IP -p $IPERF_PORT -u -b 10M -R -t $DURATION -i 1 > ~/iperf_results.txt &
+iperf -c $SERVER_IP -p $IPERF_PORT -u -b 10M -R -t $DURATION -i 1 > /home/sierra/iperf_results.txt &
 IPERF_PID=$!
 echo "[*] iperf started (PID: $IPERF_PID)"
 
-ping -c "$DURATION" "$SERVER_IP" > ~/ping_results.txt &
+ping -c "$DURATION" -I wwan0 "$SERVER_IP" > /home/sierra/ping_results.txt &
 PING_PID=$!
 echo "[*] ping started  (PID: $PING_PID)"
 
