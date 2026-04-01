@@ -41,9 +41,9 @@ local UE_TYPE_HARQ_RETX = 1
 local olla = {}
 
 local MAX_FRAME    = 1024   -- NR frame counter wraps at 1024
-local OLLA_PERIOD  = 10     -- adjust every 10 frames (100ms)
+local OLLA_PERIOD  = 5     -- adjust every 5 frames (50ms)
 local BLER_TARGET  = 0.10
-local OLLA_UP      = 0.10   -- step up per period when BLER < target
+local OLLA_UP      = 0.50   -- step up per period when BLER < target
 local OLLA_DOWN    = 1.00   -- step down per period when BLER >= target
 local MIN_MCS      = 0
 
@@ -153,15 +153,15 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
     -----------------------------------------------------------------------
     -- Local helpers
     -----------------------------------------------------------------------
-    local URLLC_UID = 0
-
-    local function get_service_class(m)
-        if m.uid == URLLC_UID then
+    
+    local function get_service_class(fiveQI)
+        local qi = tonumber(fiveQI)
+        if q1 == 69
             return "URLLC"
         else
             return "eMBB"
-        end
     end
+    
 
     local function count_free_rbs(mask_str, bwp_start, bwp_size)
         local cnt = 0
@@ -254,7 +254,7 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
             if m.pending_bytes > 0 or m.required_rbs > 0 then
                 print(string.format(
                     "[ACTIVE DL %d.%d] UE uid=%d rnti=%04x fiveQI=%d class=%s pending=%d thr=%.0f bps req_rbs=%d alloc_rb=%d prev_mcs=%d olla_frac=%s bler=%.3f hol=%d us type=%d",
-                    m.frame, m.slot, m.uid, m.rnti, tonumber(m.fiveQI), get_service_class(m),
+                    m.frame, m.slot, m.uid, m.rnti, tonumber(m.fiveQI), get_service_class(m.fiveQI),
                     m.pending_bytes, m.throughput, m.required_rbs, m.allocated_rb,
                     m.previous_mcs, frac_str, m.bler, tonumber(m.hol_delay_us), m.ue_type))
             end
@@ -461,7 +461,7 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
             local m = metrics[i]
             print(string.format(
                 "[QoS DL %d.%d] UE uid=%d rnti=%04x fiveQI=%d class=%s pending=%d thr=%.0f bps req_rbs=%d hol=%d us alloc_rb=%d alloc_mcs=%d alloc_start=%d type=%d",
-                m.frame, m.slot, m.uid, m.rnti, tonumber(m.fiveQI), get_service_class(m),
+                m.frame, m.slot, m.uid, m.rnti, tonumber(m.fiveQI), get_service_class(m.),
                 m.pending_bytes, m.throughput, m.required_rbs, tonumber(m.hol_delay_us),
                 m.allocated_rb, m.allocated_mcs, m.allocated_rb_start, m.ue_type))
         end
