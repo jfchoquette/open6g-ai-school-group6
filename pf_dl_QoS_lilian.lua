@@ -154,10 +154,7 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
     -- Local helpers
     -----------------------------------------------------------------------
     local function get_service_class(m)
-        -- 5QI-based classification:
-        -- 69 -> URLLC
-        -- otherwise -> eMBB
-        if m.uid == 0 then
+        if m.pending_bytes > 5000 or m.throughput > 1e6 then
             return "URLLC"
         else
             return "eMBB"
