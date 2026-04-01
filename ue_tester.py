@@ -382,6 +382,7 @@ def find_results_dir(scheduler_name) -> str:
         dir_name = f"{WRITABLE_DIRECTORY}/{base_name}-{counter}"
 
     counter -= 1
+    dir_name = f"{WRITABLE_DIRECTORY}/{base_name}-{counter}"
     return dir_name
 
 def save_results():
