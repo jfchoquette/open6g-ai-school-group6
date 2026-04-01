@@ -295,7 +295,7 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
     for i = 0, n_ues - 1 do
         local m = metrics[i]
         if m.ue_type == UE_TYPE_NEW_DATA and m.pending_bytes > 0 then
-            local class = get_service_class(m)
+            local class = get_service_class(m.fiveQI)
             local thr = (m.throughput > 0) and m.throughput or 1.0
             local hol = tonumber(m.hol_delay_us) or 0
 
@@ -462,7 +462,7 @@ function compute_dl_allocations(metrics_ptr, n_ues, total_rbs, min_rbs, rb_mask_
             local m = metrics[i]
             print(string.format(
                 "[QoS DL %d.%d] UE uid=%d rnti=%04x fiveQI=%d class=%s pending=%d thr=%.0f bps req_rbs=%d hol=%d us alloc_rb=%d alloc_mcs=%d alloc_start=%d type=%d",
-                m.frame, m.slot, m.uid, m.rnti, tonumber(m.fiveQI), get_service_class(m.),
+                m.frame, m.slot, m.uid, m.rnti, tonumber(m.fiveQI), get_service_class(m.fiveQI),
                 m.pending_bytes, m.throughput, m.required_rbs, tonumber(m.hol_delay_us),
                 m.allocated_rb, m.allocated_mcs, m.allocated_rb_start, m.ue_type))
         end
