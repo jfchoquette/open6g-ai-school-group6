@@ -188,7 +188,6 @@ async def wait_for_other_ue_pdu_lock(mock=False):
         return
 
     while True:
-        print("waiting for ", CQI.get().other_ue_lock_file_path)
         if os.path.exists(CQI.get().other_ue_lock_file_path):
             break
         await asyncio.sleep(0.5)
@@ -244,8 +243,15 @@ async def run_tests_for_urlcc(control, imei, args):
     print("\nURLCC: Running ping test to 10.45.0.1...")
     ping_loops = 3
     
+    print("\nURLCC: Starting iperf traffic (UDP DL 10Mbps, 20s)...")
+    iperf_handle = control.execute_command(
+        imei,
+        "iperf -c 10.45.0.1 -p 8037 -u -b 10M -R -t 20 -i 1",
+        timeout=60.0
+    )
+
     for i in range(ping_loops):
-        ping_ok, ping_output = await control.ping_test(imei, "10.45.0.1", timeout=30.0)
+        ping_ok, ping_output = control.ping_test(imei, "10.45.0.1", timeout=30.0)
         print(f"Ping result {i}: {'OK' if ping_ok else 'FAILED'}")
         if ping_output:
             print(ping_output)
@@ -255,6 +261,41 @@ async def run_tests_for_urlcc(control, imei, args):
         with open(f'{results_dir}/urlcc_ping_results.csv', 'w') as f:
             f.write("time(ms)\n")
             f.write('\n'.join(time_values))
+    
+    iperf_ok, iperf_output = await iperf_handle
+    print(f"iperf result: {'OK' if iperf_ok else 'FAILED'}")
+    if iperf_output:
+        print(iperf_output)
+        results_dir = find_results_dir(args.scheduler_file_name)
+        with open(f'{results_dir}/urlcc_iperf_results.csv', 'w') as f:
+            f.write("Interval_Start(sec),Interval_End(sec),Transfer,Transfer_Unit,Bandwidth(Mbits/sec),Jitter(ms),Lost_Datagrams,Total_Datagrams,Packet_Loss(%)\n")
+
+            for line in iperf_output.splitlines():
+                line = line.replace('\xa0', ' ')  # remove non-breaking spaces
+
+                match = re.search(
+                    r'\[\s*\*?1\]\s+'
+                    r'([0-9.]+)-([0-9.]+)\s+sec\s+'
+                    r'([0-9.]+)\s+(MBytes|KBytes)\s+'
+                    r'([0-9.]+)\s+Mbits/sec\s+'
+                    r'([0-9.]+)\s+ms\s+'
+                    r'([0-9]+)/([0-9]+)\s+\(([0-9.]+)%\)',
+                    line
+                )
+
+                if match:
+                    interval_start = match.group(1)
+                    interval_end = match.group(2)
+                    transfer = match.group(3)
+                    transfer_unit = match.group(4)
+                    bandwidth = match.group(5)
+                    jitter = match.group(6)
+                    lost = match.group(7)
+                    total = match.group(8)
+                    loss_pct = match.group(9)
+
+                    f.write(f"{interval_start},{interval_end},{transfer},{transfer_unit},{bandwidth},{jitter},{lost},{total},{loss_pct}\n")
+
 
 async def run_tests_for_embb(control, imei, args):
     """
@@ -384,16 +425,6 @@ def find_results_dir(scheduler_name) -> str:
     counter -= 1
     dir_name = f"{WRITABLE_DIRECTORY}/{base_name}-{counter}"
     return dir_name
-
-def save_results():
-    """
-    Saves results from test run.
-    """
-    
-    # Create test run directory (<scheduler_file_name>-<nextid>/)
-    # Write CSV
-    
-    pass
 
 def run():
     args = parse_args()
